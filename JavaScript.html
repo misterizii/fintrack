@@ -196,16 +196,6 @@
     return namaBulan(bulan) + ' ' + tahun;
   }
 
-  // Label bulan sebelum bulan berjalan (mis. "Oktober 2026").
-  function labelBulanLalu() {
-    const d = appData.dashboard || {};
-    const now = new Date();
-    let bulan = (d.bulanBerjalan || (now.getMonth() + 1)) - 1;
-    let tahun = d.tahunBerjalan || now.getFullYear();
-    if (bulan < 1) { bulan = 12; tahun--; }
-    return namaBulan(bulan) + ' ' + tahun;
-  }
-
   // DIPERBAIKI: Pemasukan & Pengeluaran di hero sekarang hanya bulan berjalan.
   function renderHero() {
     const d = appData.dashboard || {};
@@ -990,62 +980,16 @@
       .sort((a, b) => new Date(b['Tanggal']) - new Date(a['Tanggal']));
   }
 
-  // BARU: kartu dompet virtual "SISA BULAN LALU".
-  // Isinya = saldo semua dompet per akhir bulan lalu, dihitung otomatis oleh
-  // backend (getDashboardData). Hanya tampilan: tidak tersimpan di sheet, tidak
-  // bisa diedit/dipakai sebagai sumber transaksi, dan tidak mengubah saldo
-  // dompet asli.
-  function sisaBulanLaluCardHtml() {
-    const d = appData.dashboard || {};
-    const total = Number(d.sisaBulanLalu) || 0;
-    const rincian = (d.rincian || []).filter(r => Math.abs(Number(r.sisaBulanLalu) || 0) > 0.5);
-
-    return `
-      <div class="dompet-card dompet-sisa">
-        <div class="d-flex align-items-center justify-content-between">
-          <div>
-            <i class="fa-solid fa-box-archive me-2" style="color:var(--earth-brown);"></i>
-            <strong>SISA BULAN LALU</strong><span class="sisa-badge-auto">otomatis</span>
-          </div>
-          <span class="badge ${total >= 0 ? 'bg-success text-white' : 'bg-danger text-white'}" style="font-size:0.82rem;padding:5px 10px;border-radius:10px;">
-            ${formatRupiah(total)}
-          </span>
-        </div>
-        <small class="text-muted d-block mt-2" style="font-size:0.75rem;">
-          Sisa uang semua dompet per akhir ${labelBulanLalu()}, sebelum transaksi ${labelBulanBerjalan()}.
-        </small>
-
-        <button class="accordion-toggle-btn" type="button" data-bs-toggle="collapse" data-bs-target="#dompetSisaCollapse" aria-expanded="false">
-          <span><i class="fa-solid fa-list-ul me-1"></i> Rincian per Dompet (${rincian.length})</span>
-          <i class="fa-solid fa-chevron-down chevron-icon"></i>
-        </button>
-        <div class="collapse" id="dompetSisaCollapse">
-          <div class="trx-accordion-body">
-            ${rincian.length
-              ? rincian.map(r => `
-                  <div class="sisa-row">
-                    <span>${escapeHtml(r.sumber)}</span>
-                    <strong class="${r.sisaBulanLalu >= 0 ? 'text-success' : 'text-danger'}">${formatRupiah(r.sisaBulanLalu)}</strong>
-                  </div>`).join('')
-              : '<p class="text-center text-muted small mb-0 py-2">Belum ada sisa dari bulan lalu.</p>'}
-          </div>
-        </div>
-      </div>`;
-  }
-
   function renderDompetList() {
     const container = document.getElementById('dompetList');
     if (!container) return;
     const rincianList = (appData.dashboard && appData.dashboard.rincian) ? appData.dashboard.rincian : [];
-    container.innerHTML = sisaBulanLaluCardHtml() + ((appData.dompets || []).map((d, i) => {
+    container.innerHTML = (appData.dompets || []).map((d, i) => {
       const nama = d['Nama Dompet'];
       const r = rincianList.find(x => String(x.sumber).trim().toLowerCase() === String(nama).trim().toLowerCase());
       const saldoSaatIni = r ? r.saldoBersih : Number(d['Saldo Awal'] || 0);
-      // DIPERBARUI (saran A): pakai cara hitung bulan berjalan, sama dengan
-      // hero & dompet SISA BULAN LALU: saldo = sisa bulan lalu + masuk - keluar.
-      const sisaLalu = r ? r.sisaBulanLalu : Number(d['Saldo Awal'] || 0);
-      const pemasukan = r ? r.pemasukanBulanIni : 0;
-      const pengeluaran = r ? r.pengeluaranBulanIni : 0;
+      const pemasukan = r ? r.pemasukan : 0;
+      const pengeluaran = r ? r.pengeluaran : 0;
 
       const trxDompet = getTrxForDompet(nama);
       const collapseId = 'dompetTrxCollapse-' + i;
@@ -1064,9 +1008,9 @@
               </span>
             </div>
             <small class="text-muted d-block mt-2" style="font-size:0.75rem;">
-              Sisa bulan lalu: ${formatRupiah(sisaLalu)} ·
-              <span class="text-success fw-medium">Masuk bulan ini: +${formatRupiah(pemasukan)}</span> ·
-              <span class="text-danger fw-medium">Keluar bulan ini: -${formatRupiah(pengeluaran)}</span>
+              Saldo Awal: ${formatRupiah(d['Saldo Awal'])} ·
+              <span class="text-success fw-medium">Masuk: +${formatRupiah(pemasukan)}</span> ·
+              <span class="text-danger fw-medium">Keluar: -${formatRupiah(pengeluaran)}</span>
             </small>
           </div>
           <div class="list-row-actions ms-2">
@@ -1084,7 +1028,7 @@
           </div>
         </div>
       </div>`;
-    }).join('') || '<p class="text-muted small">Belum ada dompet.</p>');
+    }).join('') || '<p class="text-muted small">Belum ada dompet.</p>';
   }
 
   // Delegated click listener untuk tombol edit Dompet — aman terhadap nama dompet

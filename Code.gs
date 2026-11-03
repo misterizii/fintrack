@@ -50,13 +50,6 @@ const WALLET_DEFAULT  = 'Kas / Tunai';
 const ADJUSTMENT_CATEGORY = 'Penyesuaian Saldo';
 const TABUNGAN_PREFIX     = 'Tabungan: ';
 
-// Nama dompet virtual (dihitung otomatis, tidak disimpan di sheet Dompet).
-const WALLET_SISA_BULAN_LALU = 'SISA BULAN LALU';
-
-function isReservedWalletName(nama) {
-  return String(nama || '').trim().toLowerCase() === WALLET_SISA_BULAN_LALU.toLowerCase();
-}
-
 function isInternalCategory(kategori) {
   const k = String(kategori || '');
   return k === ADJUSTMENT_CATEGORY || k.indexOf(TABUNGAN_PREFIX) === 0;
@@ -403,7 +396,6 @@ function addDompet(nama, saldoAwal) {
   return withLock(() => {
     nama = String(nama || '').trim();
     if (!nama) return { success: false, error: 'Nama dompet tidak boleh kosong' };
-    if (isReservedWalletName(nama)) return { success: false, error: 'Nama "' + WALLET_SISA_BULAN_LALU + '" dipakai otomatis oleh sistem, pilih nama lain' };
 
     const dup =getDompets().some(d => String(d['Nama Dompet']).toLowerCase() === nama.toLowerCase());
     if (dup) return { success: false, error: 'Dompet dengan nama itu sudah ada' };
@@ -418,7 +410,6 @@ function updateDompet(originalNama, data) {
   return withLock(() => {
     const namaBaru = String(data.nama || '').trim();
     if (!namaBaru) return { success: false, error: 'Nama dompet tidak boleh kosong' };
-    if (isReservedWalletName(namaBaru)) return { success: false, error: 'Nama "' + WALLET_SISA_BULAN_LALU + '" dipakai otomatis oleh sistem, pilih nama lain' };
 
     if (namaBaru.toLowerCase() !== originalNama.toLowerCase()) {
       const dup = getDompets().some(d =>
@@ -1045,18 +1036,12 @@ function getTabungan() {
 /**
  * DIPERBAIKI: totalPemasukan & totalPengeluaran sekarang HANYA menghitung
  * transaksi bulan berjalan (sebelumnya menjumlahkan seluruh riwayat sejak awal).
- *
- * BARU: sisaBulanLalu = saldo semua dompet per akhir bulan lalu
- * (saldo awal + semua pemasukan - semua pengeluaran SEBELUM bulan berjalan).
- * Nilai ini ditampilkan sebagai dompet virtual "SISA BULAN LALU" di tab
- * Anggaran. Dompet ini HANYA tampilan (dihitung otomatis, tidak ditulis ke
- * sheet), jadi saldo dompet asli (BCA, Tunai, dst.) dan fitur Balancing tidak
- * berubah. Total saldo tetap = sisa bulan lalu + arus kas bulan berjalan.
+ * Total saldo tetap menghitung seluruh riwayat.
  *
  * Catatan: total pemasukan/pengeluaran bulan berjalan tetap mengecualikan
  * kategori internal (Penyesuaian Saldo & setoran Tabungan), sama seperti
- * sebelumnya. Sedangkan angka per dompet di `rincian` memasukkan semuanya,
- * karena dipakai untuk menghitung saldo dompet yang sebenarnya.
+ * sebelumnya. Angka per dompet di `rincian` memasukkan semuanya, karena
+ * dipakai untuk menghitung saldo dompet yang sebenarnya.
  */
 function getDashboardData() {
   try {
@@ -1072,8 +1057,6 @@ function getDashboardData() {
 
     const nominalOf = t => Number(t['Nominal'] || 0);
     const isBulanIni = t => getYearMonthKey(t['Tanggal']) === currentYM;
-    // Perbandingan string 'yyyy-MM' aman secara leksikografis.
-    const isSebelumBulanIni = t => getYearMonthKey(t['Tanggal']) < currentYM;
 
     const rincian = sumberList.map(sumber => {
       const sLower = String(sumber || '').trim().toLowerCase();
@@ -1092,11 +1075,6 @@ function getDashboardData() {
       const saldoAwal = Number((dompets.find(d => String(d['Nama Dompet'] || '').trim().toLowerCase() === sLower) || {})['Saldo Awal'] || 0);
       const saldoBersih = saldoAwal + pemasukan - pengeluaran;
 
-      // Saldo dompet ini per akhir bulan lalu.
-      const sisaBulanLalu = saldoAwal
-        + masuk.filter(isSebelumBulanIni).reduce((s, t) => s + nominalOf(t), 0)
-        - keluar.filter(isSebelumBulanIni).reduce((s, t) => s + nominalOf(t), 0);
-
       return {
         sumber: sumber,
         pemasukan: pemasukan,
@@ -1104,13 +1082,11 @@ function getDashboardData() {
         pemasukanBulanIni: pemasukanBulanIni,
         pengeluaranBulanIni: pengeluaranBulanIni,
         saldoAwal: saldoAwal,
-        saldoBersih: saldoBersih,
-        sisaBulanLalu: sisaBulanLalu
+        saldoBersih: saldoBersih
       };
     });
 
     const totalSaldo = rincian.reduce((s, r) => s + r.saldoBersih, 0);
-    const sisaBulanLalu = rincian.reduce((s, r) => s + r.sisaBulanLalu, 0);
 
     const transaksiAsliBulanIni = transaksi.filter(t => !isInternalCategory(t['Kategori']) && isBulanIni(t));
     const totalPemasukan = transaksiAsliBulanIni.filter(t => t['Jenis'] === 'Pemasukan').reduce((s, t) => s + nominalOf(t), 0);
@@ -1120,13 +1096,12 @@ function getDashboardData() {
       totalSaldo: totalSaldo,
       totalPemasukan: totalPemasukan,
       totalPengeluaran: totalPengeluaran,
-      sisaBulanLalu: sisaBulanLalu,
       bulanBerjalan: bulanBerjalan,
       tahunBerjalan: tahunBerjalan,
       rincian: rincian
     };
   } catch(e) {
-    return { totalSaldo: 0, totalPemasukan: 0, totalPengeluaran: 0, sisaBulanLalu: 0, rincian: [] };
+    return { totalSaldo: 0, totalPemasukan: 0, totalPengeluaran: 0, rincian: [] };
   }
 }
 

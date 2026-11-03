@@ -36,10 +36,6 @@ Sheet yang dibutuhkan (`Transaksi`, `Dompet`, `Anggaran`, `Hutang_Piutang`,
 
 - **Pemasukan / Pengeluaran** di kartu atas hanya menghitung **bulan berjalan**.
   Total Saldo tetap menghitung seluruh saldo.
-- **SISA BULAN LALU** (tab Anggaran → Kelola Dompet) adalah dompet *virtual*:
-  saldo semua dompet per akhir bulan lalu, dihitung otomatis. Tidak tersimpan
-  di sheet dan tidak memindahkan uang, sehingga saldo dompet asli & fitur
-  Balancing tidak terpengaruh. Nama ini tidak bisa dipakai untuk dompet biasa.
-- Kartu dompet menampilkan: *sisa bulan lalu + masuk bulan ini − keluar bulan
-  ini = saldo sekarang*.
+- Kartu dompet di tab Anggaran menampilkan *saldo awal + seluruh pemasukan −
+  seluruh pengeluaran = saldo sekarang*.
 - Hutang/Piutang bisa dicatat, diedit, dihapus, dan ditandai lunas.
