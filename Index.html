@@ -70,7 +70,7 @@
         </button>
       </div>
       <div class="col-3">
-        <button class="btn-action" onclick="openModal('modalHutang')">
+        <button class="btn-action" onclick="openHutangModal()">
           <i class="fa-solid fa-handshake text-warning"></i><span>Hutang</span>
         </button>
       </div>
@@ -188,7 +188,7 @@
 
     <!-- ===== TAB: HUTANG/PIUTANG ===== -->
     <div class="tab-pane-earth d-none" id="tab-hutang">
-      <button class="btn btn-earth w-100 mb-3" onclick="openModal('modalHutang')"><i class="fa-solid fa-plus"></i> Catat Hutang / Piutang</button>
+      <button class="btn btn-earth w-100 mb-3" onclick="openHutangModal()"><i class="fa-solid fa-plus"></i> Catat Hutang / Piutang</button>
       <div id="hutangList"></div>
     </div>
 
@@ -265,9 +265,10 @@
   <div class="modal fade" id="modalHutang" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered">
       <div class="modal-content modal-earth">
-        <div class="modal-header"><h6 class="modal-title"><i class="fa-solid fa-handshake me-2"></i> Catat Hutang / Piutang</h6><button class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-header"><h6 class="modal-title" id="modalHutangTitle"><i class="fa-solid fa-handshake me-2"></i> Catat Hutang / Piutang</h6><button class="btn-close" data-bs-dismiss="modal"></button></div>
         <form onsubmit="return submitHutang(event)">
           <div class="modal-body">
+            <input type="hidden" id="hutangEditId">
             <div class="mb-2">
               <label class="form-label-earth">Jenis</label>
               <select class="form-select" id="hutangJenis">
@@ -279,7 +280,10 @@
             <div class="mb-2"><label class="form-label-earth">Nominal (Rp)</label><input type="number" min="1" class="form-control" id="hutangNominal" required></div>
             <div class="mb-2"><label class="form-label-earth">Tanggal Tenggat (Opsional)</label><input type="date" class="form-control" id="hutangTenggat"></div>
           </div>
-          <div class="modal-footer"><button class="btn btn-earth w-100" type="submit">Simpan Catatan</button></div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-danger d-none" id="hutangDeleteBtn" onclick="deleteEditingHutang()"><i class="fa-solid fa-trash me-1"></i> Hapus</button>
+            <button class="btn btn-earth flex-grow-1" type="submit">Simpan Catatan</button>
+          </div>
         </form>
       </div>
     </div>

@@ -146,7 +146,22 @@ function initializeDatabase() {
   }
 }
 
+// BARU (saran B — performa): cache baca sheet yang HANYA aktif selama
+// getAllInitData() berjalan. Fungsi itu murni membaca, tapi sebelumnya sheet
+// Transaksi dibaca ulang ±6 kali dalam satu panggilan. Di luar
+// getAllInitData() cache selalu mati, jadi fungsi tulis (simpan/edit/hapus)
+// tetap membaca data terbaru.
+let _sheetCache = null;
+
 function sheetToObjects(sheetName) {
+  if (_sheetCache) {
+    if (!_sheetCache[sheetName]) _sheetCache[sheetName] = readSheetObjects_(sheetName);
+    return _sheetCache[sheetName].slice();
+  }
+  return readSheetObjects_(sheetName);
+}
+
+function readSheetObjects_(sheetName) {
   try {
     const sheet = SS.getSheetByName(sheetName);
     if (!sheet) return [];
@@ -227,7 +242,23 @@ function toSafeNumber(val) {
   return isNaN(n) ? 0 : n;
 }
 
-function getAllInitData() {
+/**
+ * DIPERBARUI (saran B — performa): sekarang juga mengembalikan data pie chart,
+ * kalender, dan anggaran+pemakaian sekaligus, sehingga satu kali refresh di
+ * browser cukup SATU panggilan ke server (sebelumnya 4 panggilan terpisah).
+ *
+ * opts (opsional): {
+ *   kalender: { bulan, tahun },  // bulan yang sedang dilihat di kalender dashboard
+ *   anggaran: { bulan, tahun }   // bulan yang sedang dilihat di tab Anggaran
+ * }
+ */
+function getAllInitData(opts) {
+  opts = opts || {};
+  const now = new Date();
+  const kal = opts.kalender || { bulan: now.getMonth() + 1, tahun: now.getFullYear() };
+  const ang = opts.anggaran || { bulan: now.getMonth() + 1, tahun: now.getFullYear() };
+
+  _sheetCache = {};
   try {
     return {
       dashboard: getDashboardData(),
@@ -238,7 +269,10 @@ function getAllInitData() {
       anggaran: getAnggaran(),
       transaksi: getTransaksi(),
       hutangPiutang: getHutangPiutang(),
-      tabungan: getTabungan()
+      tabungan: getTabungan(),
+      pieChart: getPieChartData(kal.bulan, kal.tahun),
+      kalender: getKalenderData(kal.bulan, kal.tahun),
+      anggaranPemakaian: getAnggaranDenganPemakaian(ang.bulan, ang.tahun)
     };
   } catch(e) {
     return {
@@ -250,8 +284,11 @@ function getAllInitData() {
       anggaran: [],
       transaksi: [],
       hutangPiutang: [],
-      tabungan: []
+      tabungan: [],
+      error: e.message
     };
+  } finally {
+    _sheetCache = null;
   }
 }
 
@@ -881,28 +918,71 @@ function getKategoriPemasukanList() {
 }
 
 // ================= HUTANG & PIUTANG =================
+// BARU (saran C): validasi bersama untuk tambah & edit hutang/piutang.
+// Sebelumnya nama pihak boleh kosong dan jenis tidak dicek.
+function validateHutangPiutang_(data) {
+  const jenis = String(data.jenis || '').trim();
+  if (jenis !== 'Hutang' && jenis !== 'Piutang') return { error: 'Jenis harus Hutang atau Piutang' };
+  const pihak = String(data.pihak || '').trim();
+  if (!pihak) return { error: 'Nama pihak terkait tidak boleh kosong' };
+  const nominal = Number(data.nominal);
+  if (!nominal || nominal <= 0) return { error: 'Nominal harus lebih dari 0' };
+  const tenggat = data.tenggat ? parseSafeDate(data.tenggat) : '';
+  return { jenis: jenis, pihak: pihak, nominal: nominal, tenggat: tenggat };
+}
+
+function findHutangRow_(sheet, id) {
+  const values = sheet.getDataRange().getValues();
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][0]) === String(id)) return i + 1;
+  }
+  return 0;
+}
+
 function addHutangPiutang(data) {
   return withLock(() => {
-    const nominal = Number(data.nominal);
-    if (!nominal || nominal <= 0) return { success: false, error: 'Nominal harus lebih dari 0' };
+    const v = validateHutangPiutang_(data);
+    if (v.error) return { success: false, error: v.error };
     const sheet = SS.getSheetByName(SHEET_HUTANG);
     const id = generateId('HP');
-    sheet.appendRow([id, data.jenis, data.pihak, nominal, data.status || 'Belum Lunas', data.tenggat]);
+    sheet.appendRow([id, v.jenis, v.pihak, v.nominal, data.status || 'Belum Lunas', v.tenggat]);
     return { success: true, id: id };
+  });
+}
+
+// BARU (saran C): edit hutang/piutang. Status lunas/belum tidak diubah di sini.
+function updateHutangPiutang(id, data) {
+  return withLock(() => {
+    const v = validateHutangPiutang_(data);
+    if (v.error) return { success: false, error: v.error };
+    const sheet = SS.getSheetByName(SHEET_HUTANG);
+    const row = findHutangRow_(sheet, id);
+    if (!row) return { success: false, error: 'Data tidak ditemukan' };
+    sheet.getRange(row, 2, 1, 3).setValues([[v.jenis, v.pihak, v.nominal]]);
+    sheet.getRange(row, 6).setValue(v.tenggat);
+    return { success: true };
+  });
+}
+
+// BARU (saran C): hapus hutang/piutang.
+function deleteHutangPiutang(id) {
+  return withLock(() => {
+    const sheet = SS.getSheetByName(SHEET_HUTANG);
+    const row = findHutangRow_(sheet, id);
+    if (!row) return { success: false, error: 'Data tidak ditemukan' };
+    sheet.deleteRow(row);
+    return { success: true };
   });
 }
 
 function updateHutangPiutangStatus(id, status) {
   return withLock(() => {
+    if (status !== 'Lunas' && status !== 'Belum Lunas') return { success: false, error: 'Status tidak valid' };
     const sheet = SS.getSheetByName(SHEET_HUTANG);
-    const values = sheet.getDataRange().getValues();
-    for (let i = 1; i < values.length; i++) {
-      if (values[i][0] === id) {
-        sheet.getRange(i + 1, 5).setValue(status);
-        return { success: true };
-      }
-    }
-    return { success: false, error: 'Data tidak ditemukan' };
+    const row = findHutangRow_(sheet, id);
+    if (!row) return { success: false, error: 'Data tidak ditemukan' };
+    sheet.getRange(row, 5).setValue(status);
+    return { success: true };
   });
 }
 

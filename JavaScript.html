@@ -48,7 +48,7 @@
       google.script.run
         .withSuccessHandler(onInitLoaded)
         .withFailureHandler(onLoadError)
-        .getAllInitData();
+        .getAllInitData(initDataOpts());
 
     } catch (err) {
       console.error('Init error:', err);
@@ -100,6 +100,16 @@
     }
   }
 
+  // DIPERBARUI (saran B): bulan yang sedang dilihat di kalender & tab Anggaran
+  // ikut dikirim, supaya server langsung mengembalikan data pie chart,
+  // kalender, dan anggaran dalam SATU panggilan (sebelumnya 4 panggilan).
+  function initDataOpts() {
+    return {
+      kalender: { bulan: calState.bulan, tahun: calState.tahun },
+      anggaran: { bulan: anggaranViewState.bulan, tahun: anggaranViewState.tahun }
+    };
+  }
+
   function refreshAll(callback) {
     google.script.run
       .withSuccessHandler(d => {
@@ -110,17 +120,20 @@
         if (callback) callback();
       })
       .withFailureHandler(err => showToast('Gagal sinkron: ' + (err.message || err), 'error'))
-      .getAllInitData();
+      .getAllInitData(initDataOpts());
   }
 
   function renderAll() {
+    if (appData.error) showToast('Sebagian data gagal dimuat: ' + appData.error, 'error');
     renderHero();
     renderRincianSaldo();
-    renderPieChart();
-    renderCalendar();
+    // Pakai data yang sudah ikut terkirim; kalau tidak ada (mis. respons
+    // darurat saat error), ambil terpisah dari server seperti dulu.
+    if (appData.pieChart) drawPieChart(appData.pieChart); else renderPieChart();
+    if (appData.kalender) applyKalenderData(appData.kalender); else renderCalendar();
     renderTransaksiList(appData.transaksi);
     renderDompetList();
-    renderAnggaranTab();
+    if (appData.anggaranPemakaian) applyAnggaranData(appData.anggaranPemakaian); else renderAnggaranTab();
     renderHutangList();
     renderTabunganList();
     populateSourceSelects();
@@ -228,22 +241,25 @@
   }
 
   // ================= PIE CHART =================
+  // Ambil data pie chart dari server (dipakai saat bulan kalender digeser).
   function renderPieChart() {
-    google.script.run.withSuccessHandler(data => {
-      const canvas = document.getElementById('pieChart');
-      if (!canvas || typeof Chart === 'undefined') return;
-      const ctx = canvas.getContext('2d');
-      if (pieChartInstance) pieChartInstance.destroy();
-      const palette = ['#8B6F47','#C97B5A','#9CAF88','#D9C39A','#7A9068','#B5694B','#E3D5B8','#6B5537'];
-      pieChartInstance = new Chart(ctx, {
-        type: 'pie',
-        data: {
-          labels: (data && data.labels && data.labels.length) ? data.labels : ['Belum ada data'],
-          datasets: [{ data: (data && data.values && data.values.length) ? data.values : [1], backgroundColor: palette }]
-        },
-        options: { plugins: { legend: { position: 'bottom', labels: { font: { size: 11 } } } } }
-      });
-    }).getPieChartData(calState.bulan, calState.tahun);
+    google.script.run.withSuccessHandler(drawPieChart).getPieChartData(calState.bulan, calState.tahun);
+  }
+
+  function drawPieChart(data) {
+    const canvas = document.getElementById('pieChart');
+    if (!canvas || typeof Chart === 'undefined') return;
+    const ctx = canvas.getContext('2d');
+    if (pieChartInstance) pieChartInstance.destroy();
+    const palette = ['#8B6F47','#C97B5A','#9CAF88','#D9C39A','#7A9068','#B5694B','#E3D5B8','#6B5537'];
+    pieChartInstance = new Chart(ctx, {
+      type: 'pie',
+      data: {
+        labels: (data && data.labels && data.labels.length) ? data.labels : ['Belum ada data'],
+        datasets: [{ data: (data && data.values && data.values.length) ? data.values : [1], backgroundColor: palette }]
+      },
+      options: { plugins: { legend: { position: 'bottom', labels: { font: { size: 11 } } } } }
+    });
   }
 
   // ================= KALENDER =================
@@ -257,14 +273,19 @@
     renderPieChart();
   }
 
+  // Ambil data kalender dari server (dipakai saat bulan kalender digeser).
   function renderCalendar() {
     const label = document.getElementById('calendarLabel');
     if (label) label.textContent = NAMA_BULAN[calState.bulan - 1] + ' ' + calState.tahun;
-    google.script.run.withSuccessHandler(data => {
-      calFilledDates = (data && data.filled) || [];
-      calPengeluaranPerTanggal = (data && data.pengeluaran) || {};
-      drawCalendarGrid();
-    }).getKalenderData(calState.bulan, calState.tahun);
+    google.script.run.withSuccessHandler(applyKalenderData).getKalenderData(calState.bulan, calState.tahun);
+  }
+
+  function applyKalenderData(data) {
+    const label = document.getElementById('calendarLabel');
+    if (label) label.textContent = NAMA_BULAN[calState.bulan - 1] + ' ' + calState.tahun;
+    calFilledDates = (data && data.filled) || [];
+    calPengeluaranPerTanggal = (data && data.pengeluaran) || {};
+    drawCalendarGrid();
   }
 
   function drawCalendarGrid() {
@@ -349,13 +370,19 @@
   function populateSourceSelects() {
     const sumber = (appData.sumberDana && appData.sumberDana.length) ? appData.sumberDana : ['Kas / Tunai'];
 
-    ['pengeluaranSumber','setorSumber','balancingSumber','editSumber'].forEach(id => {
-      const el = document.getElementById(id);
-      if (!el) return;
+    const isiSelect = el => {
       const current = el.value;
       el.innerHTML = sumber.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
       if (sumber.includes(current)) el.value = current;
+    };
+    ['pengeluaranSumber','setorSumber','balancingSumber','editSumber'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) isiSelect(el);
     });
+    // DIPERBAIKI (saran D): baris "Masuk ke Dompet" di form Pemasukan dibuat
+    // sekali lalu disimpan, jadi dompet yang ditambahkan belakangan tidak
+    // muncul di pilihannya. Sekarang ikut diperbarui (pilihan lama tetap).
+    document.querySelectorAll('.split-sumber').forEach(isiSelect);
 
     const katEl = document.getElementById('kategoriDatalist');
     const katEl2 = document.getElementById('kategoriDatalist2');
@@ -553,6 +580,7 @@
   function openModalPemasukan() {
     document.getElementById('pemasukanTanggal').value = todayStr();
     document.getElementById('pemasukanKategori').value = 'Gaji';
+    populateSourceSelects();
     const container = document.getElementById('pemasukanSplitContainer');
     if (!container.children.length) {
       addSplitRow();
@@ -694,39 +722,86 @@
   }
 
   // ================= HUTANG / PIUTANG =================
+  // DIPERBARUI (saran C): modal yang sama dipakai untuk tambah DAN edit.
+  // Tanpa id = catat baru; dengan id = edit (tombol Hapus ikut muncul).
+  function openHutangModal(id) {
+    const h = id ? (appData.hutangPiutang || []).find(x => String(x.ID) === String(id)) : null;
+    if (id && !h) return;
+
+    document.getElementById('hutangEditId').value = h ? h.ID : '';
+    document.getElementById('hutangJenis').value = h ? h['Jenis'] : 'Hutang';
+    document.getElementById('hutangPihak').value = h ? h['Pihak Terkait'] : '';
+    document.getElementById('hutangNominal').value = h ? h['Nominal'] : '';
+    document.getElementById('hutangTenggat').value = (h && h['Tanggal Tenggat']) ? localDateStr(h['Tanggal Tenggat']) : '';
+
+    document.getElementById('modalHutangTitle').innerHTML = h
+      ? '<i class="fa-solid fa-pen me-2"></i> Edit Hutang / Piutang'
+      : '<i class="fa-solid fa-handshake me-2"></i> Catat Hutang / Piutang';
+    document.getElementById('hutangDeleteBtn').classList.toggle('d-none', !h);
+    openModal('modalHutang');
+  }
+
   function submitHutang(e) {
     e.preventDefault();
     const form = e.target;
-    const unlock = lockSubmit(form);
-    if (!unlock) return false;
 
+    const editId = document.getElementById('hutangEditId').value;
     const payload = {
       jenis: document.getElementById('hutangJenis').value,
-      pihak: document.getElementById('hutangPihak').value,
+      pihak: document.getElementById('hutangPihak').value.trim(),
       nominal: document.getElementById('hutangNominal').value,
       tenggat: document.getElementById('hutangTenggat').value,
       status: 'Belum Lunas'
     };
+    if (!payload.pihak) {
+      showToast('Nama pihak terkait tidak boleh kosong.', 'error');
+      return false;
+    }
 
-    google.script.run
+    const unlock = lockSubmit(form);
+    if (!unlock) return false;
+
+    const runner = google.script.run
       .withSuccessHandler(res => {
         unlock();
-        if (res && res.success === false) {
-          showToast(res.error || 'Gagal menyimpan', 'error');
+        if (!res || res.success === false) {
+          showToast((res && res.error) || 'Gagal menyimpan', 'error');
           return;
         }
-        showToast('Catatan disimpan.');
+        showToast(editId ? 'Catatan diperbarui.' : 'Catatan disimpan.');
         if (bsModals.modalHutang) bsModals.modalHutang.hide();
         form.reset();
+        document.getElementById('hutangEditId').value = '';
         refreshAll();
       })
       .withFailureHandler(err => {
         unlock();
         showToast(err.message || err, 'error');
-      })
-      .addHutangPiutang(payload);
+      });
+
+    if (editId) runner.updateHutangPiutang(editId, payload);
+    else runner.addHutangPiutang(payload);
 
     return false;
+  }
+
+  function deleteEditingHutang() {
+    const id = document.getElementById('hutangEditId').value;
+    const pihak = document.getElementById('hutangPihak').value;
+    if (!id || !confirm('Hapus catatan hutang/piutang "' + pihak + '"?')) return;
+
+    google.script.run
+      .withSuccessHandler(res => {
+        if (res && res.success) {
+          showToast('Catatan dihapus.');
+          if (bsModals.modalHutang) bsModals.modalHutang.hide();
+          refreshAll();
+        } else {
+          showToast((res && res.error) || 'Gagal menghapus', 'error');
+        }
+      })
+      .withFailureHandler(err => showToast(err.message || err, 'error'))
+      .deleteHutangPiutang(id);
   }
 
   function renderHutangList() {
@@ -737,16 +812,19 @@
       container.innerHTML = '<p class="text-center text-muted small">Belum ada catatan hutang/piutang.</p>';
       return;
     }
+    // Data id/status disimpan di atribut data-* (bukan disisipkan ke onclick),
+    // supaya aman untuk nilai apa pun.
     container.innerHTML = list.map(h => `
-      <div class="card-earth py-2 px-3 d-flex flex-row justify-content-between align-items-center mb-2">
-        <div>
+      <div class="card-earth py-2 px-3 d-flex flex-row justify-content-between align-items-center mb-2 hutang-item" data-id="${escapeHtml(h.ID)}" data-status="${escapeHtml(h['Status'])}">
+        <div style="min-width:0;">
           <span class="chip-earth">${escapeHtml(h['Jenis'])}</span>
           <div class="fw-semibold mt-1">${escapeHtml(h['Pihak Terkait'])}</div>
-          <small class="text-muted">${formatRupiah(h['Nominal'])} ${h['Tanggal Tenggat'] ? '· Tenggat ' + localDateStr(h['Tanggal Tenggat']) : ''}</small>
+          <small class="text-muted">${formatRupiah(h['Nominal'])} ${h['Tanggal Tenggat'] ? '· Tenggat ' + escapeHtml(localDateStr(h['Tanggal Tenggat'])) : ''}</small>
         </div>
         <div class="text-end">
-          <span class="${h['Status'] === 'Lunas' ? 'badge-lunas' : 'badge-belum'}">${escapeHtml(h['Status'])}</span><br>
-          <button class="btn btn-sm btn-earth-outline mt-1" style="color:var(--earth-brown-dark);border-color:var(--earth-brown);" onclick="toggleHutangStatus('${h.ID}','${h['Status']}')">
+          <span class="${h['Status'] === 'Lunas' ? 'badge-lunas' : 'badge-belum'}">${escapeHtml(h['Status'])}</span>
+          <button class="edit-btn hutang-edit-btn" title="Edit / Hapus"><i class="fa-solid fa-pen"></i></button><br>
+          <button class="btn btn-sm btn-earth-outline mt-1 hutang-status-btn" style="color:var(--earth-brown-dark);border-color:var(--earth-brown);">
             ${h['Status'] === 'Lunas' ? 'Batalkan Lunas' : 'Tandai Lunas'}
           </button>
         </div>
@@ -754,10 +832,26 @@
     `).join('');
   }
 
+  document.addEventListener('click', function(e) {
+    const editBtn = e.target.closest('.hutang-edit-btn');
+    const statusBtn = e.target.closest('.hutang-status-btn');
+    if (!editBtn && !statusBtn) return;
+    const card = (editBtn || statusBtn).closest('.hutang-item');
+    if (!card) return;
+    if (editBtn) openHutangModal(card.dataset.id);
+    else toggleHutangStatus(card.dataset.id, card.dataset.status);
+  });
+
   function toggleHutangStatus(id, currentStatus) {
     const newStatus = currentStatus === 'Lunas' ? 'Belum Lunas' : 'Lunas';
     google.script.run
-      .withSuccessHandler(() => {
+      .withSuccessHandler(res => {
+        // DIPERBAIKI: sebelumnya selalu menampilkan "Status diperbarui"
+        // walaupun server mengembalikan gagal.
+        if (res && res.success === false) {
+          showToast(res.error || 'Gagal memperbarui status', 'error');
+          return;
+        }
         showToast('Status diperbarui.');
         refreshAll();
       })
@@ -947,8 +1041,11 @@
       const nama = d['Nama Dompet'];
       const r = rincianList.find(x => String(x.sumber).trim().toLowerCase() === String(nama).trim().toLowerCase());
       const saldoSaatIni = r ? r.saldoBersih : Number(d['Saldo Awal'] || 0);
-      const pemasukan = r ? r.pemasukan : 0;
-      const pengeluaran = r ? r.pengeluaran : 0;
+      // DIPERBARUI (saran A): pakai cara hitung bulan berjalan, sama dengan
+      // hero & dompet SISA BULAN LALU: saldo = sisa bulan lalu + masuk - keluar.
+      const sisaLalu = r ? r.sisaBulanLalu : Number(d['Saldo Awal'] || 0);
+      const pemasukan = r ? r.pemasukanBulanIni : 0;
+      const pengeluaran = r ? r.pengeluaranBulanIni : 0;
 
       const trxDompet = getTrxForDompet(nama);
       const collapseId = 'dompetTrxCollapse-' + i;
@@ -967,9 +1064,9 @@
               </span>
             </div>
             <small class="text-muted d-block mt-2" style="font-size:0.75rem;">
-              Saldo Awal: ${formatRupiah(d['Saldo Awal'])} ·
-              <span class="text-success fw-medium">Masuk: +${formatRupiah(pemasukan)}</span> ·
-              <span class="text-danger fw-medium">Keluar: -${formatRupiah(pengeluaran)}</span>
+              Sisa bulan lalu: ${formatRupiah(sisaLalu)} ·
+              <span class="text-success fw-medium">Masuk bulan ini: +${formatRupiah(pemasukan)}</span> ·
+              <span class="text-danger fw-medium">Keluar bulan ini: -${formatRupiah(pengeluaran)}</span>
             </small>
           </div>
           <div class="list-row-actions ms-2">
@@ -1081,28 +1178,33 @@
   // Titik masuk utama: ambil data anggaran + pemakaian bulan yang sedang dipilih,
   // langsung dari backend, lalu gambar ringkasan dan daftar kategori.
   function renderAnggaranTab() {
-    const label = document.getElementById('anggaranBulanLabel');
-    if (label) label.textContent = namaBulan(anggaranViewState.bulan) + ' ' + anggaranViewState.tahun;
-
-    initAnggaranFormDate();
-
+    updateAnggaranHeader();
     google.script.run
-      .withSuccessHandler(data => {
-        // getAnggaranDenganPemakaian() menangkap error-nya sendiri dan
-        // mengembalikan objek berisi field `error`, sehingga withFailureHandler
-        // tidak pernah terpanggil. Tanpa pemeriksaan ini, kegagalan backend
-        // tampil seolah-olah "belum ada anggaran" — persis gejala yang membuat
-        // bug anggaran sulit dilacak.
-        if (data && data.error) {
-          showToast('Gagal memuat data anggaran: ' + data.error, 'error');
-        }
-        drawAnggaranRingkasan(data);
-        drawAnggaranList(data);
-      })
+      .withSuccessHandler(applyAnggaranData)
       .withFailureHandler(err => {
         showToast('Gagal memuat data anggaran: ' + (err.message || err), 'error');
       })
       .getAnggaranDenganPemakaian(anggaranViewState.bulan, anggaranViewState.tahun);
+  }
+
+  function updateAnggaranHeader() {
+    const label = document.getElementById('anggaranBulanLabel');
+    if (label) label.textContent = namaBulan(anggaranViewState.bulan) + ' ' + anggaranViewState.tahun;
+    initAnggaranFormDate();
+  }
+
+  function applyAnggaranData(data) {
+    updateAnggaranHeader();
+    data = data || {};
+    // getAnggaranDenganPemakaian() menangkap error-nya sendiri dan
+    // mengembalikan objek berisi field `error`, sehingga withFailureHandler
+    // tidak pernah terpanggil. Tanpa pemeriksaan ini, kegagalan backend
+    // tampil seolah-olah "belum ada anggaran".
+    if (data.error) {
+      showToast('Gagal memuat data anggaran: ' + data.error, 'error');
+    }
+    drawAnggaranRingkasan(data);
+    drawAnggaranList(data);
   }
 
   // Nama bulan yang aman: mengembalikan '-' bila indeks di luar 1-12,
