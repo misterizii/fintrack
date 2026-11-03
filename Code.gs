@@ -1034,14 +1034,21 @@ function getTabungan() {
 
 // ================= DASHBOARD & KALENDER =================
 /**
- * DIPERBAIKI: totalPemasukan & totalPengeluaran sekarang HANYA menghitung
- * transaksi bulan berjalan (sebelumnya menjumlahkan seluruh riwayat sejak awal).
- * Total saldo tetap menghitung seluruh riwayat.
+ * Angka di kartu atas HANYA menghitung bulan berjalan (bulan lalu tidak ikut):
+ *   totalPemasukan  = pemasukan bulan ini
+ *   totalPengeluaran = pengeluaran bulan ini
+ *   totalSaldo      = totalPemasukan - totalPengeluaran
+ * Saldo awal dompet dan transaksi bulan-bulan sebelumnya tidak dihitung.
+ * Kategori internal (Penyesuaian Saldo & setoran Tabungan) dikecualikan,
+ * sama seperti sebelumnya, supaya Saldo = Pemasukan - Pengeluaran yang tampil.
  *
- * Catatan: total pemasukan/pengeluaran bulan berjalan tetap mengecualikan
- * kategori internal (Penyesuaian Saldo & setoran Tabungan), sama seperti
- * sebelumnya. Angka per dompet di `rincian` memasukkan semuanya, karena
- * dipakai untuk menghitung saldo dompet yang sebenarnya.
+ * Per dompet di `rincian`:
+ *   - pemasukanBulanIni / pengeluaranBulanIni / saldoBulanIni: bulan berjalan
+ *     (tanpa kategori internal), untuk rincian di kartu atas.
+ *   - saldoBersih: saldo dompet SEBENARNYA (saldo awal + seluruh riwayat,
+ *     termasuk kategori internal). Tetap dipakai oleh fitur Balancing dan
+ *     kartu dompet di tab Anggaran — kalau ikut dibuat bulanan, Balancing
+ *     akan mencatat selisih yang salah.
  */
 function getDashboardData() {
   try {
@@ -1068,9 +1075,10 @@ function getDashboardData() {
       const pemasukan = masuk.reduce((s, t) => s + nominalOf(t), 0);
       const pengeluaran = keluar.reduce((s, t) => s + nominalOf(t), 0);
 
-      // Arus kas bulan berjalan.
-      const pemasukanBulanIni = masuk.filter(isBulanIni).reduce((s, t) => s + nominalOf(t), 0);
-      const pengeluaranBulanIni = keluar.filter(isBulanIni).reduce((s, t) => s + nominalOf(t), 0);
+      // Arus kas bulan berjalan (tanpa kategori internal).
+      const asliBulanIni = t => isBulanIni(t) && !isInternalCategory(t['Kategori']);
+      const pemasukanBulanIni = masuk.filter(asliBulanIni).reduce((s, t) => s + nominalOf(t), 0);
+      const pengeluaranBulanIni = keluar.filter(asliBulanIni).reduce((s, t) => s + nominalOf(t), 0);
 
       const saldoAwal = Number((dompets.find(d => String(d['Nama Dompet'] || '').trim().toLowerCase() === sLower) || {})['Saldo Awal'] || 0);
       const saldoBersih = saldoAwal + pemasukan - pengeluaran;
@@ -1081,16 +1089,16 @@ function getDashboardData() {
         pengeluaran: pengeluaran,
         pemasukanBulanIni: pemasukanBulanIni,
         pengeluaranBulanIni: pengeluaranBulanIni,
+        saldoBulanIni: pemasukanBulanIni - pengeluaranBulanIni,
         saldoAwal: saldoAwal,
         saldoBersih: saldoBersih
       };
     });
 
-    const totalSaldo = rincian.reduce((s, r) => s + r.saldoBersih, 0);
-
     const transaksiAsliBulanIni = transaksi.filter(t => !isInternalCategory(t['Kategori']) && isBulanIni(t));
     const totalPemasukan = transaksiAsliBulanIni.filter(t => t['Jenis'] === 'Pemasukan').reduce((s, t) => s + nominalOf(t), 0);
     const totalPengeluaran = transaksiAsliBulanIni.filter(t => t['Jenis'] === 'Pengeluaran').reduce((s, t) => s + nominalOf(t), 0);
+    const totalSaldo = totalPemasukan - totalPengeluaran;
 
     return {
       totalSaldo: totalSaldo,

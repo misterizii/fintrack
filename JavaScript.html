@@ -196,7 +196,8 @@
     return namaBulan(bulan) + ' ' + tahun;
   }
 
-  // DIPERBAIKI: Pemasukan & Pengeluaran di hero sekarang hanya bulan berjalan.
+  // DIPERBAIKI: Saldo, Pemasukan & Pengeluaran di hero hanya bulan berjalan
+  // (Saldo = Pemasukan - Pengeluaran bulan ini; bulan lalu tidak dihitung).
   function renderHero() {
     const d = appData.dashboard || {};
     document.getElementById('totalSaldoText').textContent = formatRupiah(d.totalSaldo || 0);
@@ -204,14 +205,16 @@
     document.getElementById('totalPengeluaranText').textContent = formatRupiah(d.totalPengeluaran || 0);
 
     const bulanLabel = labelBulanBerjalan();
+    const lblSaldo = document.getElementById('labelSaldo');
+    if (lblSaldo) lblSaldo.textContent = 'Saldo ' + bulanLabel;
     const lblIn = document.getElementById('labelPemasukan');
     const lblOut = document.getElementById('labelPengeluaran');
     if (lblIn) lblIn.textContent = 'Pemasukan ' + bulanLabel;
     if (lblOut) lblOut.textContent = 'Pengeluaran ' + bulanLabel;
   }
 
-  // DIPERBAIKI: angka +/- per dompet ikut bulan berjalan, supaya konsisten
-  // dengan angka Pemasukan/Pengeluaran di atasnya. Saldo bersih tetap total.
+  // DIPERBAIKI: rincian per dompet ikut bulan berjalan, supaya jumlahnya
+  // sama dengan angka Saldo/Pemasukan/Pengeluaran di atasnya.
   function renderRincianSaldo() {
     const body = document.getElementById('rincianSaldoBody');
     if (!body) return;
@@ -220,7 +223,7 @@
       <div class="rincian-row">
         <div>
           <strong>${escapeHtml(r.sumber)}</strong>
-          <small>Saldo bersih: ${formatRupiah(r.saldoBersih)}</small>
+          <small>Saldo bulan ini: ${formatRupiah(r.saldoBulanIni)}</small>
         </div>
         <div class="rincian-nominal">
           <div class="text-success">+${formatRupiah(r.pemasukanBulanIni)}</div>

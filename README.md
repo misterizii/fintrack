@@ -34,8 +34,11 @@ Sheet yang dibutuhkan (`Transaksi`, `Dompet`, `Anggaran`, `Hutang_Piutang`,
 
 ## Catatan fitur
 
-- **Pemasukan / Pengeluaran** di kartu atas hanya menghitung **bulan berjalan**.
-  Total Saldo tetap menghitung seluruh saldo.
+- Kartu atas (**Saldo, Pemasukan, Pengeluaran**) hanya menghitung **bulan
+  berjalan**: Saldo = Pemasukan bulan ini − Pengeluaran bulan ini. Saldo awal
+  dompet dan bulan-bulan sebelumnya tidak dihitung. Kategori internal
+  (Penyesuaian Saldo, setoran Tabungan) tidak ikut dihitung.
+- Fitur **Balancing** tetap memakai saldo dompet sebenarnya (seluruh riwayat).
 - Kartu dompet di tab Anggaran menampilkan *saldo awal + seluruh pemasukan −
   seluruh pengeluaran = saldo sekarang*.
 - Hutang/Piutang bisa dicatat, diedit, dihapus, dan ditandai lunas.
