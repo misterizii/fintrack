@@ -38,16 +38,21 @@
     <div class="hero-card mt-3" id="heroCard">
       <p class="hero-label" id="labelSaldo">Saldo Bulan Ini</p>
       <h1 class="hero-amount" id="totalSaldoText">Rp 0</h1>
-      <div class="row text-center mt-3">
-        <div class="col-6">
-          <small class="opacity-75"><i class="fa-solid fa-arrow-down text-success"></i> <span id="labelPemasukan">Pemasukan Bulan Ini</span></small>
-          <div class="fw-semibold fs-6" id="totalPemasukanText">Rp 0</div>
+      <div class="row text-center mt-3 g-1">
+        <div class="col-4">
+          <small class="opacity-75 d-block hero-sub-label"><i class="fa-solid fa-arrow-down text-success"></i> Pemasukan</small>
+          <div class="fw-semibold hero-sub-amount" id="totalPemasukanText">Rp 0</div>
         </div>
-        <div class="col-6">
-          <small class="opacity-75"><i class="fa-solid fa-arrow-up text-danger"></i> <span id="labelPengeluaran">Pengeluaran Bulan Ini</span></small>
-          <div class="fw-semibold fs-6" id="totalPengeluaranText">Rp 0</div>
+        <div class="col-4">
+          <small class="opacity-75 d-block hero-sub-label"><i class="fa-solid fa-arrow-up text-danger"></i> Pengeluaran</small>
+          <div class="fw-semibold hero-sub-amount" id="totalPengeluaranText">Rp 0</div>
+        </div>
+        <div class="col-4">
+          <small class="opacity-75 d-block hero-sub-label"><i class="fa-solid fa-piggy-bank"></i> Ditabung</small>
+          <div class="fw-semibold hero-sub-amount" id="totalTabunganText">Rp 0</div>
         </div>
       </div>
+      <small class="d-block mt-2 opacity-75 hero-note" id="heroNote"></small>
 
       <button class="btn btn-light-earth w-100 mt-3" type="button" data-bs-toggle="collapse" data-bs-target="#rincianSaldo">
         <i class="fa-solid fa-list-ul me-1"></i> Rincian Saldo per Dompet <i class="fa-solid fa-chevron-down ms-1"></i>
@@ -194,6 +199,7 @@
 
     <!-- ===== TAB: TABUNGAN ===== -->
     <div class="tab-pane-earth d-none" id="tab-tabungan">
+      <div id="tabunganRingkasan"></div>
       <button class="btn btn-earth w-100 mb-3" onclick="openModal('modalTujuanTabungan')"><i class="fa-solid fa-plus"></i> Buat Target Tabungan</button>
       <div id="tabunganList"></div>
     </div>

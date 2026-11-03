@@ -196,21 +196,22 @@
     return namaBulan(bulan) + ' ' + tahun;
   }
 
-  // DIPERBAIKI: Saldo, Pemasukan & Pengeluaran di hero hanya bulan berjalan
-  // (Saldo = Pemasukan - Pengeluaran bulan ini; bulan lalu tidak dihitung).
+  // Kartu atas hanya bulan berjalan:
+  // Saldo = Pemasukan - Pengeluaran - Ditabung (bulan ini).
+  // Setoran tabungan ditampilkan terpisah ("Ditabung"), bukan pengeluaran,
+  // tapi tetap mengurangi saldo karena uangnya sudah disisihkan.
   function renderHero() {
     const d = appData.dashboard || {};
     document.getElementById('totalSaldoText').textContent = formatRupiah(d.totalSaldo || 0);
     document.getElementById('totalPemasukanText').textContent = formatRupiah(d.totalPemasukan || 0);
     document.getElementById('totalPengeluaranText').textContent = formatRupiah(d.totalPengeluaran || 0);
+    document.getElementById('totalTabunganText').textContent = formatRupiah(d.totalTabungan || 0);
 
     const bulanLabel = labelBulanBerjalan();
     const lblSaldo = document.getElementById('labelSaldo');
     if (lblSaldo) lblSaldo.textContent = 'Saldo ' + bulanLabel;
-    const lblIn = document.getElementById('labelPemasukan');
-    const lblOut = document.getElementById('labelPengeluaran');
-    if (lblIn) lblIn.textContent = 'Pemasukan ' + bulanLabel;
-    if (lblOut) lblOut.textContent = 'Pengeluaran ' + bulanLabel;
+    const note = document.getElementById('heroNote');
+    if (note) note.textContent = 'Semua angka untuk ' + bulanLabel + ' · Total tabungan terkumpul: ' + formatRupiah(d.totalTabunganTerkumpul || 0);
   }
 
   // DIPERBAIKI: rincian per dompet ikut bulan berjalan, supaya jumlahnya
@@ -228,6 +229,7 @@
         <div class="rincian-nominal">
           <div class="text-success">+${formatRupiah(r.pemasukanBulanIni)}</div>
           <small class="text-danger">-${formatRupiah(r.pengeluaranBulanIni)}</small>
+          ${r.tabunganBulanIni ? `<small><i class="fa-solid fa-piggy-bank"></i> ${formatRupiah(r.tabunganBulanIni)}</small>` : ''}
         </div>
       </div>
     `).join('') || '<p class="text-white-50 small mb-0">Belum ada data dompet.</p>';
@@ -920,7 +922,38 @@
     return false;
   }
 
+  // BARU: ringkasan tabungan di atas daftar target (tampilan sendiri, terpisah
+  // dari pengeluaran).
+  function renderTabunganRingkasan() {
+    const el = document.getElementById('tabunganRingkasan');
+    if (!el) return;
+    const d = appData.dashboard || {};
+    const list = appData.tabungan || [];
+    const totalTarget = list.reduce((s, t) => s + (Number(t['Target']) || 0), 0);
+    const terkumpul = Number(d.totalTabunganTerkumpul) || 0;
+    const pct = totalTarget > 0 ? Math.min(100, Math.round((terkumpul / totalTarget) * 100)) : 0;
+    el.innerHTML = `
+      <div class="card-earth ringkasan-anggaran-card">
+        <h6 class="card-title-earth mb-2"><i class="fa-solid fa-piggy-bank me-1"></i> Ringkasan Tabungan</h6>
+        <div class="row text-center g-2 mb-2">
+          <div class="col-6">
+            <small class="text-muted d-block">Ditabung ${labelBulanBerjalan()}</small>
+            <div class="fw-semibold" style="font-size:1.05rem;">${formatRupiah(d.totalTabungan || 0)}</div>
+          </div>
+          <div class="col-6">
+            <small class="text-muted d-block">Total Terkumpul</small>
+            <div class="fw-semibold" style="font-size:1.05rem;">${formatRupiah(terkumpul)}</div>
+          </div>
+        </div>
+        ${totalTarget > 0 ? `
+          <div class="progress-earth mb-1"><div class="progress-earth-bar" style="width:${pct}%;"></div></div>
+          <small style="color:rgba(255,255,255,0.85);">${pct}% dari total target ${formatRupiah(totalTarget)}</small>
+        ` : `<small class="text-muted">Belum ada target tabungan.</small>`}
+      </div>`;
+  }
+
   function renderTabunganList() {
+    renderTabunganRingkasan();
     const container = document.getElementById('tabunganList');
     if (!container) return;
     const list = appData.tabungan || [];

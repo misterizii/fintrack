@@ -34,10 +34,13 @@ Sheet yang dibutuhkan (`Transaksi`, `Dompet`, `Anggaran`, `Hutang_Piutang`,
 
 ## Catatan fitur
 
-- Kartu atas (**Saldo, Pemasukan, Pengeluaran**) hanya menghitung **bulan
-  berjalan**: Saldo = Pemasukan bulan ini − Pengeluaran bulan ini. Saldo awal
-  dompet dan bulan-bulan sebelumnya tidak dihitung. Kategori internal
-  (Penyesuaian Saldo, setoran Tabungan) tidak ikut dihitung.
+- Kartu atas (**Saldo, Pemasukan, Pengeluaran, Ditabung**) hanya menghitung **bulan
+  berjalan**: Saldo = Pemasukan − Pengeluaran − Ditabung (bulan ini). Saldo
+  awal dompet dan bulan-bulan sebelumnya tidak dihitung. Setoran tabungan
+  ditampilkan terpisah (bukan pengeluaran) tapi mengurangi saldo, karena
+  uangnya sudah disisihkan. Penyesuaian Saldo (Balancing) tidak dihitung.
+- Tab **Tabungan** punya ringkasan sendiri: ditabung bulan ini, total
+  terkumpul, dan progres terhadap total target.
 - Fitur **Balancing** tetap memakai saldo dompet sebenarnya (seluruh riwayat).
 - Kartu dompet di tab Anggaran menampilkan *saldo awal + seluruh pemasukan −
   seluruh pengeluaran = saldo sekarang*.

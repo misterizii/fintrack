@@ -50,6 +50,10 @@ const WALLET_DEFAULT  = 'Kas / Tunai';
 const ADJUSTMENT_CATEGORY = 'Penyesuaian Saldo';
 const TABUNGAN_PREFIX     = 'Tabungan: ';
 
+function isTabunganCategory(kategori) {
+  return String(kategori || '').indexOf(TABUNGAN_PREFIX) === 0;
+}
+
 function isInternalCategory(kategori) {
   const k = String(kategori || '');
   return k === ADJUSTMENT_CATEGORY || k.indexOf(TABUNGAN_PREFIX) === 0;
@@ -1037,14 +1041,18 @@ function getTabungan() {
  * Angka di kartu atas HANYA menghitung bulan berjalan (bulan lalu tidak ikut):
  *   totalPemasukan  = pemasukan bulan ini
  *   totalPengeluaran = pengeluaran bulan ini
- *   totalSaldo      = totalPemasukan - totalPengeluaran
+ *   totalTabungan   = setoran tabungan bulan ini (ditampilkan TERPISAH,
+ *                     bukan bagian dari pengeluaran)
+ *   totalSaldo      = totalPemasukan - totalPengeluaran - totalTabungan
+ *                     (uang yang ditabung sudah disisihkan, jadi tidak lagi
+ *                     termasuk saldo yang bisa dikelola)
  * Saldo awal dompet dan transaksi bulan-bulan sebelumnya tidak dihitung.
- * Kategori internal (Penyesuaian Saldo & setoran Tabungan) dikecualikan,
- * sama seperti sebelumnya, supaya Saldo = Pemasukan - Pengeluaran yang tampil.
+ * Transaksi Penyesuaian Saldo (Balancing) tidak dihitung di kartu atas.
+ * totalTabunganTerkumpul = jumlah 'Saldo Terkumpul' semua target tabungan.
  *
  * Per dompet di `rincian`:
- *   - pemasukanBulanIni / pengeluaranBulanIni / saldoBulanIni: bulan berjalan
- *     (tanpa kategori internal), untuk rincian di kartu atas.
+ *   - pemasukanBulanIni / pengeluaranBulanIni / tabunganBulanIni /
+ *     saldoBulanIni: bulan berjalan, untuk rincian di kartu atas.
  *   - saldoBersih: saldo dompet SEBENARNYA (saldo awal + seluruh riwayat,
  *     termasuk kategori internal). Tetap dipakai oleh fitur Balancing dan
  *     kartu dompet di tab Anggaran — kalau ikut dibuat bulanan, Balancing
@@ -1079,6 +1087,7 @@ function getDashboardData() {
       const asliBulanIni = t => isBulanIni(t) && !isInternalCategory(t['Kategori']);
       const pemasukanBulanIni = masuk.filter(asliBulanIni).reduce((s, t) => s + nominalOf(t), 0);
       const pengeluaranBulanIni = keluar.filter(asliBulanIni).reduce((s, t) => s + nominalOf(t), 0);
+      const tabunganBulanIni = keluar.filter(t => isBulanIni(t) && isTabunganCategory(t['Kategori'])).reduce((s, t) => s + nominalOf(t), 0);
 
       const saldoAwal = Number((dompets.find(d => String(d['Nama Dompet'] || '').trim().toLowerCase() === sLower) || {})['Saldo Awal'] || 0);
       const saldoBersih = saldoAwal + pemasukan - pengeluaran;
@@ -1089,7 +1098,8 @@ function getDashboardData() {
         pengeluaran: pengeluaran,
         pemasukanBulanIni: pemasukanBulanIni,
         pengeluaranBulanIni: pengeluaranBulanIni,
-        saldoBulanIni: pemasukanBulanIni - pengeluaranBulanIni,
+        tabunganBulanIni: tabunganBulanIni,
+        saldoBulanIni: pemasukanBulanIni - pengeluaranBulanIni - tabunganBulanIni,
         saldoAwal: saldoAwal,
         saldoBersih: saldoBersih
       };
@@ -1098,18 +1108,24 @@ function getDashboardData() {
     const transaksiAsliBulanIni = transaksi.filter(t => !isInternalCategory(t['Kategori']) && isBulanIni(t));
     const totalPemasukan = transaksiAsliBulanIni.filter(t => t['Jenis'] === 'Pemasukan').reduce((s, t) => s + nominalOf(t), 0);
     const totalPengeluaran = transaksiAsliBulanIni.filter(t => t['Jenis'] === 'Pengeluaran').reduce((s, t) => s + nominalOf(t), 0);
-    const totalSaldo = totalPemasukan - totalPengeluaran;
+    const totalTabungan = transaksi
+      .filter(t => t['Jenis'] === 'Pengeluaran' && isBulanIni(t) && isTabunganCategory(t['Kategori']))
+      .reduce((s, t) => s + nominalOf(t), 0);
+    const totalSaldo = totalPemasukan - totalPengeluaran - totalTabungan;
+    const totalTabunganTerkumpul = getTabungan().reduce((s, t) => s + Number(t['Saldo Terkumpul'] || 0), 0);
 
     return {
       totalSaldo: totalSaldo,
       totalPemasukan: totalPemasukan,
       totalPengeluaran: totalPengeluaran,
+      totalTabungan: totalTabungan,
+      totalTabunganTerkumpul: totalTabunganTerkumpul,
       bulanBerjalan: bulanBerjalan,
       tahunBerjalan: tahunBerjalan,
       rincian: rincian
     };
   } catch(e) {
-    return { totalSaldo: 0, totalPemasukan: 0, totalPengeluaran: 0, rincian: [] };
+    return { totalSaldo: 0, totalPemasukan: 0, totalPengeluaran: 0, totalTabungan: 0, totalTabunganTerkumpul: 0, rincian: [] };
   }
 }
 
