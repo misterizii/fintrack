@@ -1009,10 +1009,24 @@
   }
 
   // ambil semua transaksi milik satu dompet, terbaru dulu
+  // 'yyyy-MM' bulan berjalan, diambil dari backend supaya sama persis dengan
+  // bulan yang dipakai menghitung angka di kartu atas.
+  function currentYearMonth() {
+    const d = appData.dashboard || {};
+    const now = new Date();
+    const bulan = d.bulanBerjalan || (now.getMonth() + 1);
+    const tahun = d.tahunBerjalan || now.getFullYear();
+    return tahun + '-' + String(bulan).padStart(2, '0');
+  }
+
+  // DIPERBAIKI: hanya transaksi bulan berjalan milik dompet ini, terbaru dulu.
+  // Sebelumnya seluruh riwayat (termasuk bulan lalu) ikut ditampilkan.
   function getTrxForDompet(namaDompet) {
     const sLower = String(namaDompet || '').trim().toLowerCase();
+    const ym = currentYearMonth();
     return (appData.transaksi || [])
       .filter(t => String(t['Sumber/Dompet'] || '').trim().toLowerCase() === sLower)
+      .filter(t => localDateStr(t['Tanggal']).substring(0, 7) === ym)
       .sort((a, b) => new Date(b['Tanggal']) - new Date(a['Tanggal']));
   }
 
@@ -1023,9 +1037,12 @@
     container.innerHTML = (appData.dompets || []).map((d, i) => {
       const nama = d['Nama Dompet'];
       const r = rincianList.find(x => String(x.sumber).trim().toLowerCase() === String(nama).trim().toLowerCase());
-      const saldoSaatIni = r ? r.saldoBersih : Number(d['Saldo Awal'] || 0);
-      const pemasukan = r ? r.pemasukan : 0;
-      const pengeluaran = r ? r.pengeluaran : 0;
+      // DIPERBAIKI: kartu dompet hanya bulan berjalan, sama seperti kartu atas
+      // (saldo = masuk - keluar - ditabung bulan ini; bulan lalu tidak ikut).
+      const saldoSaatIni = r ? r.saldoBulanIni : 0;
+      const pemasukan = r ? r.pemasukanBulanIni : 0;
+      const pengeluaran = r ? r.pengeluaranBulanIni : 0;
+      const ditabung = r ? r.tabunganBulanIni : 0;
 
       const trxDompet = getTrxForDompet(nama);
       const collapseId = 'dompetTrxCollapse-' + i;
@@ -1044,9 +1061,10 @@
               </span>
             </div>
             <small class="text-muted d-block mt-2" style="font-size:0.75rem;">
-              Saldo Awal: ${formatRupiah(d['Saldo Awal'])} ·
+              ${labelBulanBerjalan()} ·
               <span class="text-success fw-medium">Masuk: +${formatRupiah(pemasukan)}</span> ·
               <span class="text-danger fw-medium">Keluar: -${formatRupiah(pengeluaran)}</span>
+              ${ditabung ? ` · <span class="fw-medium"><i class="fa-solid fa-piggy-bank"></i> Ditabung: ${formatRupiah(ditabung)}</span>` : ''}
             </small>
           </div>
           <div class="list-row-actions ms-2">
@@ -1060,7 +1078,7 @@
         </button>
         <div class="collapse" id="${collapseId}">
           <div class="trx-accordion-body">
-            ${trxDompet.length ? trxDompet.map(trxItemHtml).join('') : '<p class="text-center text-muted small mb-0 py-2">Belum ada transaksi untuk dompet ini.</p>'}
+            ${trxDompet.length ? trxDompet.map(trxItemHtml).join('') : '<p class="text-center text-muted small mb-0 py-2">Belum ada transaksi untuk dompet ini bulan ini.</p>'}
           </div>
         </div>
       </div>`;

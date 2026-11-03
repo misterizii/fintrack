@@ -42,6 +42,6 @@ Sheet yang dibutuhkan (`Transaksi`, `Dompet`, `Anggaran`, `Hutang_Piutang`,
 - Tab **Tabungan** punya ringkasan sendiri: ditabung bulan ini, total
   terkumpul, dan progres terhadap total target.
 - Fitur **Balancing** tetap memakai saldo dompet sebenarnya (seluruh riwayat).
-- Kartu dompet di tab Anggaran menampilkan *saldo awal + seluruh pemasukan −
-  seluruh pengeluaran = saldo sekarang*.
+- Kartu dompet di tab Anggaran juga hanya **bulan berjalan**: saldo = masuk −
+  keluar − ditabung bulan ini, dan rincian transaksinya hanya bulan ini.
 - Hutang/Piutang bisa dicatat, diedit, dihapus, dan ditandai lunas.
