@@ -1,0 +1,1319 @@
+<script>
+  let appData = {
+    dashboard: { totalSaldo: 0, totalPemasukan: 0, totalPengeluaran: 0, rincian: [] },
+    dompets: [],
+    sumberDana: [],
+    kategoriList: [],
+    kategoriPemasukanList: [],
+    anggaran: [],
+    transaksi: [],
+    hutangPiutang: [],
+    tabungan: []
+  };
+
+  let pieChartInstance = null;
+  let calState = { bulan: new Date().getMonth() + 1, tahun: new Date().getFullYear() };
+  let calFilledDates = [];
+  let calPengeluaranPerTanggal = {}; // map tanggal (yyyy-MM-dd) -> total pengeluaran
+  let bsModals = {};
+
+  // menyimpan tanggal (yyyy-MM-dd) yang sedang dibuka di modal riwayat-per-tanggal
+  let currentModalTanggal = null;
+
+  // BARU: bulan/tahun yang sedang dilihat di tab Anggaran (independen dari kalender dashboard)
+  let anggaranViewState = { bulan: new Date().getMonth() + 1, tahun: new Date().getFullYear() };
+
+  // Inisialisasi aman: berjalan baik saat DOMContentLoaded maupun jika sudah ready
+  function initApp() {
+    try {
+      if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+        document.querySelectorAll('.modal').forEach(m => bsModals[m.id] = new bootstrap.Modal(m));
+      }
+
+      document.querySelectorAll('#mainTabs .nav-link').forEach(btn => {
+        btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+      });
+
+      const elIn = document.getElementById('pemasukanTanggal');
+      const elOut = document.getElementById('pengeluaranTanggal');
+      if (elIn) elIn.value = todayStr();
+      if (elOut) elOut.value = todayStr();
+
+      // Timeout darurat 6 detik: jika server lemot, hilangkan loading agar UI tetap bisa diakses
+      setTimeout(() => {
+        hideLoading();
+      }, 6000);
+
+      // Panggil backend Google Apps Script
+      google.script.run
+        .withSuccessHandler(onInitLoaded)
+        .withFailureHandler(onLoadError)
+        .getAllInitData();
+
+    } catch (err) {
+      console.error('Init error:', err);
+      hideLoading();
+      showToast('Inisialisasi selesai: ' + err.message, 'error');
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initApp);
+  } else {
+    initApp();
+  }
+
+  function hideLoading() {
+    const el = document.getElementById('loadingOverlay');
+    if (el) el.classList.add('d-none');
+  }
+
+  function localDateStr(d) {
+    if (!d) return todayStr();
+    if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+    d = new Date(d);
+    if (isNaN(d.getTime())) return todayStr();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  function todayStr() { return localDateStr(new Date()); }
+
+  function onLoadError(err) {
+    hideLoading();
+    showToast('Gagal memuat dari spreadsheet: ' + (err.message || err), 'error');
+  }
+
+  function onInitLoaded(data) {
+    try {
+      if (data) {
+        appData = data;
+        renderAll();
+      }
+    } catch(e) {
+      console.error('Error in renderAll:', e);
+      showToast('Tampilan diperbarui dengan catatan: ' + e.message, 'error');
+    } finally {
+      hideLoading();
+    }
+  }
+
+  function refreshAll(callback) {
+    google.script.run
+      .withSuccessHandler(d => {
+        if (d) {
+          appData = d;
+          renderAll();
+        }
+        if (callback) callback();
+      })
+      .withFailureHandler(err => showToast('Gagal sinkron: ' + (err.message || err), 'error'))
+      .getAllInitData();
+  }
+
+  function renderAll() {
+    renderHero();
+    renderRincianSaldo();
+    renderPieChart();
+    renderCalendar();
+    renderTransaksiList(appData.transaksi);
+    renderDompetList();
+    renderAnggaranTab();
+    renderHutangList();
+    renderTabunganList();
+    populateSourceSelects();
+  }
+
+  function formatRupiah(n) {
+    n = Number(n) || 0;
+    return 'Rp ' + n.toLocaleString('id-ID', { maximumFractionDigits: 0 });
+  }
+
+  // format singkat untuk angka di dalam sel kalender (mis. 150rb, 2.3jt, 1.2M)
+  function formatRupiahSingkat(n) {
+    n = Number(n) || 0;
+    if (n >= 1000000000) return (n / 1000000000).toFixed(1).replace(/\.0$/, '') + 'M';
+    if (n >= 1000000)    return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'jt';
+    if (n >= 1000)       return Math.round(n / 1000) + 'rb';
+    return String(n);
+  }
+
+  function lockSubmit(formEl) {
+    const btn = formEl.querySelector('button[type="submit"]');
+    if (!btn) return function(){};
+    if (btn.disabled) return null;
+    btn.disabled = true;
+    btn.dataset.originalHtml = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Menyimpan...';
+    return function unlock() {
+      btn.disabled = false;
+      if (btn.dataset.originalHtml) btn.innerHTML = btn.dataset.originalHtml;
+    };
+  }
+
+  function switchTab(tab) {
+    document.querySelectorAll('#mainTabs .nav-link').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    document.querySelectorAll('.tab-pane-earth').forEach(p => p.classList.add('d-none'));
+    const target = document.getElementById('tab-' + tab);
+    if (target) target.classList.remove('d-none');
+  }
+
+  function openModal(id) {
+    if (bsModals[id]) {
+      bsModals[id].show();
+    } else if (typeof bootstrap !== 'undefined' && bootstrap.Modal) {
+      const el = document.getElementById(id);
+      if (el) {
+        bsModals[id] = new bootstrap.Modal(el);
+        bsModals[id].show();
+      }
+    }
+  }
+
+  // ================= HERO / RINCIAN =================
+  function renderHero() {
+    const d = appData.dashboard || {};
+    document.getElementById('totalSaldoText').textContent = formatRupiah(d.totalSaldo || 0);
+    document.getElementById('totalPemasukanText').textContent = formatRupiah(d.totalPemasukan || 0);
+    document.getElementById('totalPengeluaranText').textContent = formatRupiah(d.totalPengeluaran || 0);
+  }
+
+  function renderRincianSaldo() {
+    const body = document.getElementById('rincianSaldoBody');
+    if (!body) return;
+    const rincian = (appData.dashboard && appData.dashboard.rincian) ? appData.dashboard.rincian : [];
+    body.innerHTML = rincian.map(r => `
+      <div class="rincian-row">
+        <div>
+          <strong>${escapeHtml(r.sumber)}</strong>
+          <small>Saldo bersih: ${formatRupiah(r.saldoBersih)}</small>
+        </div>
+        <div class="rincian-nominal">
+          <div class="text-success">+${formatRupiah(r.pemasukan)}</div>
+          <small class="text-danger">-${formatRupiah(r.pengeluaran)}</small>
+        </div>
+      </div>
+    `).join('') || '<p class="text-white-50 small mb-0">Belum ada data dompet.</p>';
+  }
+
+  // ================= PIE CHART =================
+  function renderPieChart() {
+    google.script.run.withSuccessHandler(data => {
+      const canvas = document.getElementById('pieChart');
+      if (!canvas || typeof Chart === 'undefined') return;
+      const ctx = canvas.getContext('2d');
+      if (pieChartInstance) pieChartInstance.destroy();
+      const palette = ['#8B6F47','#C97B5A','#9CAF88','#D9C39A','#7A9068','#B5694B','#E3D5B8','#6B5537'];
+      pieChartInstance = new Chart(ctx, {
+        type: 'pie',
+        data: {
+          labels: (data && data.labels && data.labels.length) ? data.labels : ['Belum ada data'],
+          datasets: [{ data: (data && data.values && data.values.length) ? data.values : [1], backgroundColor: palette }]
+        },
+        options: { plugins: { legend: { position: 'bottom', labels: { font: { size: 11 } } } } }
+      });
+    }).getPieChartData(calState.bulan, calState.tahun);
+  }
+
+  // ================= KALENDER =================
+  const NAMA_BULAN = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+
+  function shiftCalendar(delta) {
+    calState.bulan += delta;
+    if (calState.bulan > 12) { calState.bulan = 1; calState.tahun++; }
+    if (calState.bulan < 1) { calState.bulan = 12; calState.tahun--; }
+    renderCalendar();
+    renderPieChart();
+  }
+
+  function renderCalendar() {
+    const label = document.getElementById('calendarLabel');
+    if (label) label.textContent = NAMA_BULAN[calState.bulan - 1] + ' ' + calState.tahun;
+    google.script.run.withSuccessHandler(data => {
+      calFilledDates = (data && data.filled) || [];
+      calPengeluaranPerTanggal = (data && data.pengeluaran) || {};
+      drawCalendarGrid();
+    }).getKalenderData(calState.bulan, calState.tahun);
+  }
+
+  function drawCalendarGrid() {
+    const grid = document.getElementById('calendarGrid');
+    if (!grid) return;
+    const firstDay = new Date(calState.tahun, calState.bulan - 1, 1).getDay();
+    const daysInMonth = new Date(calState.tahun, calState.bulan, 0).getDate();
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+
+    let html = '';
+    ['M','S','S','R','K','J','S'].forEach(d => html += `<div class="calendar-cell blank" style="font-weight:600;">${d}</div>`);
+    for (let i = 0; i < firstDay; i++) html += '<div class="calendar-cell blank"></div>';
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateObj = new Date(calState.tahun, calState.bulan - 1, d);
+      const dateStr = localDateStr(dateObj);
+      const isFuture = dateObj > today;
+      const filled = calFilledDates.includes(dateStr);
+      const pengeluaran = calPengeluaranPerTanggal[dateStr] || 0;
+
+      let cls = 'calendar-cell';
+      if (isFuture) cls += ' future';
+      else cls += filled ? ' filled' : ' empty-day';
+
+      const titleAttr = pengeluaran > 0
+        ? `Pengeluaran: ${formatRupiah(pengeluaran)}`
+        : (filled ? 'Ada transaksi' : 'Tidak ada transaksi');
+
+      html += `<div class="${cls}" onclick="openDateModal('${dateStr}')" title="${titleAttr}">
+          <span class="cal-day-num">${d}</span>
+          ${pengeluaran > 0 ? `<span class="cal-day-expense">-${formatRupiahSingkat(pengeluaran)}</span>` : ''}
+        </div>`;
+    }
+    grid.innerHTML = html;
+  }
+
+  // ================= MODAL TRANSAKSI PER TANGGAL =================
+  function formatTanggalIndo(dateStr) {
+    const d = new Date(dateStr + 'T12:00:00');
+    if (isNaN(d.getTime())) return dateStr;
+    return d.toLocaleDateString('id-ID', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
+  }
+
+  function openDateModal(dateStr) {
+    currentModalTanggal = dateStr;
+    const label = document.getElementById('modalTanggalLabel');
+    if (label) label.innerHTML = '<i class="fa-solid fa-calendar-day me-2"></i> ' + formatTanggalIndo(dateStr);
+    const searchEl = document.getElementById('tanggalSearchInput');
+    if (searchEl) searchEl.value = '';
+    renderTanggalTransaksiList();
+    openModal('modalTanggalTransaksi');
+  }
+
+  function renderTanggalTransaksiList() {
+    const container = document.getElementById('tanggalTransaksiList');
+    if (!container || !currentModalTanggal) return;
+
+    const searchEl = document.getElementById('tanggalSearchInput');
+    const term = (searchEl && searchEl.value ? searchEl.value : '').trim().toLowerCase();
+
+    let list = (appData.transaksi || []).filter(t => localDateStr(t['Tanggal']) === currentModalTanggal);
+
+    if (term) {
+      list = list.filter(t =>
+        String(t['Keterangan']).toLowerCase().includes(term) ||
+        String(t['Kategori']).toLowerCase().includes(term) ||
+        String(t['Sumber/Dompet']).toLowerCase().includes(term)
+      );
+    }
+
+    if (!list.length) {
+      container.innerHTML = '<p class="text-center text-muted small mt-2">Tidak ada transaksi yang cocok pada tanggal ini.</p>';
+      return;
+    }
+    container.innerHTML = list.map(trxItemHtml).join('');
+  }
+
+  function onTanggalSearch() {
+    renderTanggalTransaksiList();
+  }
+
+  // ================= SELECT & DATALIST =================
+  function populateSourceSelects() {
+    const sumber = (appData.sumberDana && appData.sumberDana.length) ? appData.sumberDana : ['Kas / Tunai'];
+
+    ['pengeluaranSumber','setorSumber','balancingSumber','editSumber'].forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const current = el.value;
+      el.innerHTML = sumber.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+      if (sumber.includes(current)) el.value = current;
+    });
+
+    const katEl = document.getElementById('kategoriDatalist');
+    const katEl2 = document.getElementById('kategoriDatalist2');
+    if (katEl) katEl.innerHTML = (appData.kategoriList || []).map(k => `<option value="${escapeHtml(k)}">`).join('');
+    if (katEl2) katEl2.innerHTML = (appData.kategoriList || []).map(k => `<option value="${escapeHtml(k)}">`).join('');
+
+    const katInEl = document.getElementById('kategoriPemasukanDatalist');
+    if (katInEl) {
+      const defaultIn = appData.kategoriPemasukanList || ['Gaji', 'Bonus & THR', 'Hasil Usaha', 'Freelance', 'Hadiah', 'Lainnya'];
+      katInEl.innerHTML = defaultIn.map(k => `<option value="${escapeHtml(k)}">`).join('');
+    }
+
+    const setorTujuan = document.getElementById('setorTujuan');
+    if (setorTujuan) {
+      setorTujuan.innerHTML = (appData.tabungan || []).map(t => `<option value="${t.ID}">${escapeHtml(t['Tujuan Tabungan'])}</option>`).join('') || '<option disabled>Belum ada target tabungan</option>';
+    }
+  }
+
+  // ================= TRANSAKSI LIST =================
+  function onSearch() {
+    const term = document.getElementById('searchInput').value.trim();
+    if (!term) { renderTransaksiList(appData.transaksi); return; }
+    google.script.run.withSuccessHandler(renderTransaksiList).getTransaksi(term);
+  }
+
+  // Pencarian transaksi langsung di halaman utama (tab Dashboard)
+  function onDashboardSearch() {
+    const el = document.getElementById('dashboardSearchInput');
+    const container = document.getElementById('dashboardSearchResult');
+    if (!el || !container) return;
+
+    const term = el.value.trim();
+    if (!term) { container.innerHTML = ''; return; }
+
+    const lower = term.toLowerCase();
+    const list = (appData.transaksi || []).filter(t =>
+      String(t['Keterangan']).toLowerCase().includes(lower) ||
+      String(t['Kategori']).toLowerCase().includes(lower) ||
+      String(t['Sumber/Dompet']).toLowerCase().includes(lower)
+    );
+
+    if (!list.length) {
+      container.innerHTML = '<p class="text-center text-muted small mt-2 mb-0">Tidak ada transaksi yang cocok dengan "' + escapeHtml(term) + '".</p>';
+      return;
+    }
+
+    const shown = list.slice(0, 20);
+    container.innerHTML = shown.map(trxItemHtml).join('') +
+      (list.length > shown.length
+        ? `<p class="text-center text-muted small mt-1 mb-0">Menampilkan ${shown.length} dari ${list.length} hasil. Perjelas kata kunci untuk mempersempit.</p>`
+        : '');
+  }
+
+  // template kartu transaksi diekstrak jadi fungsi tersendiri
+  // supaya bisa dipakai ulang di tab Riwayat, modal per-tanggal, dan accordion rincian.
+  function trxItemHtml(t) {
+    const isIn = t['Jenis'] === 'Pemasukan';
+    const tgl = new Date(t['Tanggal']);
+    const tglStr = !isNaN(tgl.getTime())
+      ? tgl.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
+      : t['Tanggal'];
+    return `
+      <div class="trx-item">
+        <div class="d-flex align-items-center" style="min-width:0;">
+          <div class="trx-icon ${isIn ? 'in' : 'out'}"><i class="fa-solid ${isIn ? 'fa-arrow-down' : 'fa-arrow-up'}"></i></div>
+          <div class="trx-meta" style="min-width:0;">
+            <div class="text-truncate" style="max-width:170px;">
+              <span class="chip-earth">${escapeHtml(t['Kategori'] || '-')}</span>
+            </div>
+            <small>${escapeHtml(t['Sumber/Dompet'])} · ${tglStr}</small>
+            ${t['Keterangan'] ? `<small class="text-truncate d-block" style="max-width:190px;">${escapeHtml(t['Keterangan'])}</small>` : ''}
+          </div>
+        </div>
+        <div class="d-flex align-items-center">
+          <span class="trx-amount ${isIn ? 'in' : 'out'}">${isIn ? '+' : '-'}${formatRupiah(t['Nominal'])}</span>
+          <button class="trx-edit-btn" onclick='editTransaksi(${JSON.stringify(t['ID Transaksi'])})'><i class="fa-solid fa-pen"></i></button>
+        </div>
+      </div>`;
+  }
+
+  function renderTransaksiList(list) {
+    const container = document.getElementById('transaksiList');
+    if (!container) return;
+    if (!list || !list.length) {
+      container.innerHTML = '<p class="text-center text-muted small mt-3">Belum ada catatan transaksi.</p>';
+      return;
+    }
+    container.innerHTML = list.map(trxItemHtml).join('');
+  }
+
+  function editTransaksi(id) {
+    const t = (appData.transaksi || []).find(x => String(x['ID Transaksi']) === String(id));
+    if (!t) return;
+    // Jika modal riwayat-per-tanggal sedang terbuka, sembunyikan dulu agar tidak tumpang tindih
+    if (bsModals.modalTanggalTransaksi) bsModals.modalTanggalTransaksi.hide();
+
+    document.getElementById('editId').value = id;
+    document.getElementById('editTanggal').value = localDateStr(t['Tanggal']);
+    document.getElementById('editJenis').value = t['Jenis'];
+    populateSourceSelects();
+    document.getElementById('editSumber').value = t['Sumber/Dompet'];
+    document.getElementById('editKategori').value = t['Kategori'];
+    document.getElementById('editNominal').value = t['Nominal'];
+    document.getElementById('editKeterangan').value = t['Keterangan'] || '';
+    openModal('modalEditTransaksi');
+  }
+
+  function submitEditTransaksi(e) {
+    e.preventDefault();
+    const form = e.target;
+    const unlock = lockSubmit(form);
+    if (!unlock) return false;
+
+    const id = document.getElementById('editId').value;
+    const payload = {
+      tanggal: document.getElementById('editTanggal').value,
+      jenis: document.getElementById('editJenis').value,
+      sumber: document.getElementById('editSumber').value,
+      kategori: document.getElementById('editKategori').value,
+      nominal: document.getElementById('editNominal').value,
+      keterangan: document.getElementById('editKeterangan').value
+    };
+
+    google.script.run
+      .withSuccessHandler(res => {
+        unlock();
+        if (res.success) {
+          showToast('Transaksi diperbarui.');
+          if (bsModals.modalEditTransaksi) bsModals.modalEditTransaksi.hide();
+          refreshAll();
+          if (currentModalTanggal) {
+            setTimeout(() => { renderTanggalTransaksiList(); openModal('modalTanggalTransaksi'); }, 300);
+          }
+        } else {
+          showToast(res.error || 'Gagal memperbarui', 'error');
+        }
+      })
+      .withFailureHandler(err => {
+        unlock();
+        showToast(err.message || err, 'error');
+      })
+      .updateTransaksi(id, payload);
+
+    return false;
+  }
+
+  function deleteEditingTransaksi() {
+    const id = document.getElementById('editId').value;
+    if (!confirm('Hapus transaksi ini?')) return;
+    google.script.run
+      .withSuccessHandler(res => {
+        if (res.success) {
+          showToast('Transaksi dihapus.');
+          if (bsModals.modalEditTransaksi) bsModals.modalEditTransaksi.hide();
+          refreshAll();
+          if (currentModalTanggal) {
+            setTimeout(() => { renderTanggalTransaksiList(); openModal('modalTanggalTransaksi'); }, 300);
+          }
+        } else {
+          showToast(res.error || 'Gagal menghapus', 'error');
+        }
+      })
+      .withFailureHandler(err => showToast(err.message || err, 'error'))
+      .deleteTransaksi(id);
+  }
+
+  // ================= PEMASUKAN =================
+  function openModalPemasukan() {
+    document.getElementById('pemasukanTanggal').value = todayStr();
+    document.getElementById('pemasukanKategori').value = 'Gaji';
+    const container = document.getElementById('pemasukanSplitContainer');
+    if (!container.children.length) {
+      addSplitRow();
+    }
+    openModal('modalPemasukan');
+  }
+
+  function addSplitRow() {
+    const container = document.getElementById('pemasukanSplitContainer');
+    const row = document.createElement('div');
+    row.className = 'split-row';
+    const sumberList = (appData.sumberDana && appData.sumberDana.length) ? appData.sumberDana : ['Kas / Tunai'];
+
+    row.innerHTML = `
+      <select class="form-select form-select-sm split-sumber" style="flex:1.2;">
+        ${sumberList.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('')}
+      </select>
+      <input type="number" min="1" class="form-control form-control-sm split-nominal" placeholder="Nominal (Rp)" style="flex:1.5;" oninput="updateSplitTotal()">
+      <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeSplitRow(this)"><i class="fa-solid fa-xmark"></i></button>
+    `;
+    container.appendChild(row);
+  }
+
+  function removeSplitRow(btn) {
+    const container = document.getElementById('pemasukanSplitContainer');
+    if (container.children.length <= 1) {
+      showToast('Minimal harus ada 1 dompet penerima.', 'error');
+      return;
+    }
+    btn.parentElement.remove();
+    updateSplitTotal();
+  }
+
+  function updateSplitTotal() {
+    let total = 0;
+    document.querySelectorAll('.split-nominal').forEach(inp => total += Number(inp.value) || 0);
+    document.getElementById('pemasukanTotalText').textContent = formatRupiah(total);
+  }
+
+  function submitPemasukan(e) {
+    e.preventDefault();
+    const form = e.target;
+    const unlock = lockSubmit(form);
+    if (!unlock) return false;
+
+    const splits = [];
+    document.querySelectorAll('.split-row').forEach(row => {
+      const sumber = row.querySelector('.split-sumber').value;
+      const nominal = row.querySelector('.split-nominal').value;
+      if (Number(nominal) > 0 && sumber) {
+        splits.push({ sumber, nominal });
+      }
+    });
+
+    if (!splits.length) {
+      showToast('Isi nominal pemasukan yang valid (> 0).', 'error');
+      unlock();
+      return false;
+    }
+
+    const payload = {
+      tanggal: document.getElementById('pemasukanTanggal').value,
+      kategori: document.getElementById('pemasukanKategori').value,
+      keterangan: document.getElementById('pemasukanKeterangan').value,
+      splits: splits
+    };
+
+    google.script.run
+      .withSuccessHandler(res => {
+        unlock();
+        if (!res.success) {
+          showToast(res.error || 'Gagal menyimpan', 'error');
+          return;
+        }
+        showToast('Pemasukan berhasil disimpan.');
+        if (bsModals.modalPemasukan) bsModals.modalPemasukan.hide();
+        document.getElementById('pemasukanSplitContainer').innerHTML = '';
+        document.getElementById('pemasukanKeterangan').value = '';
+        updateSplitTotal();
+        refreshAll();
+      })
+      .withFailureHandler(err => {
+        unlock();
+        showToast(err.message || err, 'error');
+      })
+      .addPemasukanSplit(payload);
+
+    return false;
+  }
+
+  // ================= PENGELUARAN =================
+  function openModalPengeluaran() {
+    document.getElementById('pengeluaranTanggal').value = todayStr();
+    populateSourceSelects();
+    openModal('modalPengeluaran');
+  }
+
+  function submitPengeluaran(e) {
+    e.preventDefault();
+    const form = e.target;
+    const unlock = lockSubmit(form);
+    if (!unlock) return false;
+
+    const payload = {
+      tanggal: document.getElementById('pengeluaranTanggal').value,
+      jenis: 'Pengeluaran',
+      sumber: document.getElementById('pengeluaranSumber').value,
+      kategori: document.getElementById('pengeluaranKategori').value,
+      nominal: document.getElementById('pengeluaranNominal').value,
+      keterangan: document.getElementById('pengeluaranKeterangan').value
+    };
+
+    if (!payload.sumber) {
+      showToast('Pilih dompet terlebih dahulu.', 'error');
+      unlock();
+      return false;
+    }
+
+    google.script.run
+      .withSuccessHandler(res => {
+        unlock();
+        if (!res.success) {
+          showToast(res.error || 'Gagal menyimpan', 'error');
+          return;
+        }
+        showToast('Pengeluaran berhasil dicatat.');
+        if (bsModals.modalPengeluaran) bsModals.modalPengeluaran.hide();
+        form.reset();
+        document.getElementById('pengeluaranTanggal').value = todayStr();
+        refreshAll();
+      })
+      .withFailureHandler(err => {
+        unlock();
+        showToast(err.message || err, 'error');
+      })
+      .addTransaksi(payload);
+
+    return false;
+  }
+
+  // ================= HUTANG / PIUTANG =================
+  function submitHutang(e) {
+    e.preventDefault();
+    const form = e.target;
+    const unlock = lockSubmit(form);
+    if (!unlock) return false;
+
+    const payload = {
+      jenis: document.getElementById('hutangJenis').value,
+      pihak: document.getElementById('hutangPihak').value,
+      nominal: document.getElementById('hutangNominal').value,
+      tenggat: document.getElementById('hutangTenggat').value,
+      status: 'Belum Lunas'
+    };
+
+    google.script.run
+      .withSuccessHandler(res => {
+        unlock();
+        if (res && res.success === false) {
+          showToast(res.error || 'Gagal menyimpan', 'error');
+          return;
+        }
+        showToast('Catatan disimpan.');
+        if (bsModals.modalHutang) bsModals.modalHutang.hide();
+        form.reset();
+        refreshAll();
+      })
+      .withFailureHandler(err => {
+        unlock();
+        showToast(err.message || err, 'error');
+      })
+      .addHutangPiutang(payload);
+
+    return false;
+  }
+
+  function renderHutangList() {
+    const container = document.getElementById('hutangList');
+    if (!container) return;
+    const list = appData.hutangPiutang || [];
+    if (!list.length) {
+      container.innerHTML = '<p class="text-center text-muted small">Belum ada catatan hutang/piutang.</p>';
+      return;
+    }
+    container.innerHTML = list.map(h => `
+      <div class="card-earth py-2 px-3 d-flex flex-row justify-content-between align-items-center mb-2">
+        <div>
+          <span class="chip-earth">${escapeHtml(h['Jenis'])}</span>
+          <div class="fw-semibold mt-1">${escapeHtml(h['Pihak Terkait'])}</div>
+          <small class="text-muted">${formatRupiah(h['Nominal'])} ${h['Tanggal Tenggat'] ? '· Tenggat ' + localDateStr(h['Tanggal Tenggat']) : ''}</small>
+        </div>
+        <div class="text-end">
+          <span class="${h['Status'] === 'Lunas' ? 'badge-lunas' : 'badge-belum'}">${escapeHtml(h['Status'])}</span><br>
+          <button class="btn btn-sm btn-earth-outline mt-1" style="color:var(--earth-brown-dark);border-color:var(--earth-brown);" onclick="toggleHutangStatus('${h.ID}','${h['Status']}')">
+            ${h['Status'] === 'Lunas' ? 'Batalkan Lunas' : 'Tandai Lunas'}
+          </button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function toggleHutangStatus(id, currentStatus) {
+    const newStatus = currentStatus === 'Lunas' ? 'Belum Lunas' : 'Lunas';
+    google.script.run
+      .withSuccessHandler(() => {
+        showToast('Status diperbarui.');
+        refreshAll();
+      })
+      .withFailureHandler(err => showToast(err.message || err, 'error'))
+      .updateHutangPiutangStatus(id, newStatus);
+  }
+
+  // ================= TABUNGAN =================
+  function submitTujuanTabungan(e) {
+    e.preventDefault();
+    const form = e.target;
+    const unlock = lockSubmit(form);
+    if (!unlock) return false;
+
+    const nama = document.getElementById('tujuanNama').value;
+    const target = document.getElementById('tujuanTarget').value;
+
+    google.script.run
+      .withSuccessHandler(res => {
+        unlock();
+        if (res && res.success === false) {
+          showToast(res.error || 'Gagal menyimpan', 'error');
+          return;
+        }
+        showToast('Target tabungan dibuat.');
+        if (bsModals.modalTujuanTabungan) bsModals.modalTujuanTabungan.hide();
+        form.reset();
+        refreshAll();
+      })
+      .withFailureHandler(err => {
+        unlock();
+        showToast(err.message || err, 'error');
+      })
+      .addTabungan(nama, target);
+
+    return false;
+  }
+
+  function submitSetorTabungan(e) {
+    e.preventDefault();
+    const form = e.target;
+    const unlock = lockSubmit(form);
+    if (!unlock) return false;
+
+    const id = document.getElementById('setorTujuan').value;
+    const nominal = document.getElementById('setorNominal').value;
+    const sumber = document.getElementById('setorSumber').value;
+
+    if (!id) {
+      showToast('Pilih target tabungan terlebih dahulu.', 'error');
+      unlock();
+      return false;
+    }
+
+    google.script.run
+      .withSuccessHandler(res => {
+        unlock();
+        if (res.success) {
+          showToast('Setoran berhasil dicatat.');
+          if (bsModals.modalTabungan) bsModals.modalTabungan.hide();
+          form.reset();
+          refreshAll();
+        } else {
+          showToast(res.error || 'Gagal setor', 'error');
+        }
+      })
+      .withFailureHandler(err => {
+        unlock();
+        showToast(err.message || err, 'error');
+      })
+      .setorTabungan(id, nominal, sumber);
+
+    return false;
+  }
+
+  function renderTabunganList() {
+    const container = document.getElementById('tabunganList');
+    if (!container) return;
+    const list = appData.tabungan || [];
+    if (!list.length) {
+      container.innerHTML = '<p class="text-center text-muted small">Belum ada target tabungan.</p>';
+      return;
+    }
+    container.innerHTML = list.map(t => {
+      const target = Math.max(1, Number(t['Target']) || 1);
+      const saldo = Number(t['Saldo Terkumpul']) || 0;
+      const pct = Math.min(100, Math.round((saldo / target) * 100));
+      return `
+        <div class="card-earth mb-2">
+          <div class="d-flex justify-content-between">
+            <strong>${escapeHtml(t['Tujuan Tabungan'])}</strong>
+            <span class="chip-earth">${pct}%</span>
+          </div>
+          <div class="progress-earth mt-2 mb-1"><div class="progress-earth-bar" style="width:${pct}%;"></div></div>
+          <small class="text-muted">${formatRupiah(saldo)} terkumpul dari ${formatRupiah(target)}</small>
+        </div>`;
+    }).join('');
+  }
+
+  // ================= DOMPET (+ accordion rincian transaksi per dompet) =================
+  function submitDompet(e) {
+    e.preventDefault();
+    const form = e.target;
+    const unlock = lockSubmit(form);
+    if (!unlock) return false;
+
+    const nama = document.getElementById('dompetNama').value;
+    const saldo = document.getElementById('dompetSaldo').value;
+
+    google.script.run
+      .withSuccessHandler(res => {
+        unlock();
+        if (res && res.success === false) {
+          showToast(res.error || 'Gagal menyimpan', 'error');
+          return;
+        }
+        showToast('Dompet ditambahkan.');
+        form.reset();
+        document.getElementById('dompetSaldo').value = 0;
+        refreshAll();
+      })
+      .withFailureHandler(err => {
+        unlock();
+        showToast(err.message || err, 'error');
+      })
+      .addDompet(nama, saldo);
+
+    return false;
+  }
+
+  // ambil semua transaksi milik satu dompet, terbaru dulu
+  function getTrxForDompet(namaDompet) {
+    const sLower = String(namaDompet || '').trim().toLowerCase();
+    return (appData.transaksi || [])
+      .filter(t => String(t['Sumber/Dompet'] || '').trim().toLowerCase() === sLower)
+      .sort((a, b) => new Date(b['Tanggal']) - new Date(a['Tanggal']));
+  }
+
+  function renderDompetList() {
+    const container = document.getElementById('dompetList');
+    if (!container) return;
+    const rincianList = (appData.dashboard && appData.dashboard.rincian) ? appData.dashboard.rincian : [];
+    container.innerHTML = (appData.dompets || []).map((d, i) => {
+      const nama = d['Nama Dompet'];
+      const r = rincianList.find(x => String(x.sumber).trim().toLowerCase() === String(nama).trim().toLowerCase());
+      const saldoSaatIni = r ? r.saldoBersih : Number(d['Saldo Awal'] || 0);
+      const pemasukan = r ? r.pemasukan : 0;
+      const pengeluaran = r ? r.pengeluaran : 0;
+
+      const trxDompet = getTrxForDompet(nama);
+      const collapseId = 'dompetTrxCollapse-' + i;
+
+      return `
+      <div class="dompet-card" data-nama="${escapeHtml(nama)}" data-saldo-awal="${Number(d['Saldo Awal']) || 0}">
+        <div class="d-flex align-items-center justify-content-between">
+          <div style="min-width:0;flex:1;">
+            <div class="d-flex align-items-center justify-content-between">
+              <div>
+                <i class="fa-solid fa-wallet me-2" style="color:var(--earth-terracotta);"></i>
+                <strong>${escapeHtml(nama)}</strong>
+              </div>
+              <span class="badge ${saldoSaatIni >= 0 ? 'bg-success text-white' : 'bg-danger text-white'}" style="font-size:0.82rem;padding:5px 10px;border-radius:10px;">
+                ${formatRupiah(saldoSaatIni)}
+              </span>
+            </div>
+            <small class="text-muted d-block mt-2" style="font-size:0.75rem;">
+              Saldo Awal: ${formatRupiah(d['Saldo Awal'])} ·
+              <span class="text-success fw-medium">Masuk: +${formatRupiah(pemasukan)}</span> ·
+              <span class="text-danger fw-medium">Keluar: -${formatRupiah(pengeluaran)}</span>
+            </small>
+          </div>
+          <div class="list-row-actions ms-2">
+            <button class="edit-btn dompet-edit-btn" title="Edit Dompet"><i class="fa-solid fa-pen"></i></button>
+          </div>
+        </div>
+
+        <button class="accordion-toggle-btn" type="button" data-bs-toggle="collapse" data-bs-target="#${collapseId}" aria-expanded="false">
+          <span><i class="fa-solid fa-list-ul me-1"></i> Rincian Transaksi (${trxDompet.length})</span>
+          <i class="fa-solid fa-chevron-down chevron-icon"></i>
+        </button>
+        <div class="collapse" id="${collapseId}">
+          <div class="trx-accordion-body">
+            ${trxDompet.length ? trxDompet.map(trxItemHtml).join('') : '<p class="text-center text-muted small mb-0 py-2">Belum ada transaksi untuk dompet ini.</p>'}
+          </div>
+        </div>
+      </div>`;
+    }).join('') || '<p class="text-muted small">Belum ada dompet.</p>';
+  }
+
+  // Delegated click listener untuk tombol edit Dompet — aman terhadap nama dompet
+  // apa pun (termasuk yang mengandung tanda kutip), karena data diambil dari
+  // atribut data-* dan bukan disisipkan ke dalam string onclick.
+  document.addEventListener('click', function(e) {
+    const dompetEditBtn = e.target.closest('.dompet-edit-btn');
+    if (dompetEditBtn) {
+      const card = dompetEditBtn.closest('.dompet-card');
+      if (card) openEditDompet(card.dataset.nama, Number(card.dataset.saldoAwal) || 0);
+    }
+  });
+
+  function openEditDompet(nama, saldoAwal) {
+    document.getElementById('editDompetOriginalNama').value = nama;
+    document.getElementById('editDompetNama').value = nama;
+    document.getElementById('editDompetSaldo').value = saldoAwal;
+    openModal('modalEditDompet');
+  }
+
+  function submitEditDompet(e) {
+    e.preventDefault();
+    const form = e.target;
+    const unlock = lockSubmit(form);
+    if (!unlock) return false;
+
+    const originalNama = document.getElementById('editDompetOriginalNama').value;
+    const payload = {
+      nama: document.getElementById('editDompetNama').value,
+      saldoAwal: document.getElementById('editDompetSaldo').value
+    };
+
+    google.script.run
+      .withSuccessHandler(res => {
+        unlock();
+        if (res.success) {
+          showToast('Dompet diperbarui.');
+          if (bsModals.modalEditDompet) bsModals.modalEditDompet.hide();
+          refreshAll();
+        } else {
+          showToast(res.error || 'Gagal memperbarui', 'error');
+        }
+      })
+      .withFailureHandler(err => {
+        unlock();
+        showToast(err.message || err, 'error');
+      })
+      .updateDompet(originalNama, payload);
+
+    return false;
+  }
+
+  function deleteEditingDompet() {
+    const nama = document.getElementById('editDompetOriginalNama').value;
+    if (!confirm('Hapus dompet "' + nama + '"? Dompet hanya bisa dihapus jika tidak memiliki riwayat transaksi.')) return;
+
+    google.script.run
+      .withSuccessHandler(res => {
+        if (res.success) {
+          showToast('Dompet dihapus.');
+          if (bsModals.modalEditDompet) bsModals.modalEditDompet.hide();
+          refreshAll();
+        } else {
+          showToast(res.error || 'Gagal menghapus', 'error');
+        }
+      })
+      .withFailureHandler(err => showToast(err.message || err, 'error'))
+      .deleteDompet(nama);
+  }
+
+  // ================= ANGGARAN (DIBONGKAR ULANG SEPENUHNYA) =================
+  // Prinsip baru: SATU sumber kebenaran. Semua angka "terpakai" per kategori
+  // datang langsung dari backend (getAnggaranDenganPemakaian), tidak lagi
+  // dihitung ulang di sisi browser. Ini menghilangkan risiko data yang
+  // tampil di tab Anggaran berbeda dari data transaksi yang sebenarnya.
+
+  function initAnggaranFormDate() {
+    const b = document.getElementById('anggaranBulan');
+    const t = document.getElementById('anggaranTahun');
+    if (b && !b.value) b.value = anggaranViewState.bulan;
+    if (t && !t.value) t.value = anggaranViewState.tahun;
+  }
+
+  function shiftAnggaranBulan(delta) {
+    anggaranViewState.bulan += delta;
+    if (anggaranViewState.bulan > 12) { anggaranViewState.bulan = 1; anggaranViewState.tahun++; }
+    if (anggaranViewState.bulan < 1) { anggaranViewState.bulan = 12; anggaranViewState.tahun--; }
+    renderAnggaranTab();
+  }
+
+  // Titik masuk utama: ambil data anggaran + pemakaian bulan yang sedang dipilih,
+  // langsung dari backend, lalu gambar ringkasan dan daftar kategori.
+  function renderAnggaranTab() {
+    const label = document.getElementById('anggaranBulanLabel');
+    if (label) label.textContent = namaBulan(anggaranViewState.bulan) + ' ' + anggaranViewState.tahun;
+
+    initAnggaranFormDate();
+
+    google.script.run
+      .withSuccessHandler(data => {
+        // getAnggaranDenganPemakaian() menangkap error-nya sendiri dan
+        // mengembalikan objek berisi field `error`, sehingga withFailureHandler
+        // tidak pernah terpanggil. Tanpa pemeriksaan ini, kegagalan backend
+        // tampil seolah-olah "belum ada anggaran" — persis gejala yang membuat
+        // bug anggaran sulit dilacak.
+        if (data && data.error) {
+          showToast('Gagal memuat data anggaran: ' + data.error, 'error');
+        }
+        drawAnggaranRingkasan(data);
+        drawAnggaranList(data);
+      })
+      .withFailureHandler(err => {
+        showToast('Gagal memuat data anggaran: ' + (err.message || err), 'error');
+      })
+      .getAnggaranDenganPemakaian(anggaranViewState.bulan, anggaranViewState.tahun);
+  }
+
+  // Nama bulan yang aman: mengembalikan '-' bila indeks di luar 1-12,
+  // supaya tidak pernah menampilkan "undefined" di UI.
+  function namaBulan(n) {
+    const i = Number(n);
+    return (i >= 1 && i <= 12) ? NAMA_BULAN[i - 1] : '-';
+  }
+
+  function drawAnggaranRingkasan(data) {
+    const container = document.getElementById('anggaranRingkasan');
+    if (!container) return;
+
+    const totalAnggaran = data.totalAnggaran || 0;
+    const totalTerpakai = data.totalTerpakaiBerAnggaran || 0;
+    const totalPengeluaranBulanIni = data.totalPengeluaranBulanIni || 0;
+    const sisa = totalAnggaran - totalTerpakai;
+    const pct = totalAnggaran > 0 ? Math.min(100, Math.round((totalTerpakai / totalAnggaran) * 100)) : 0;
+    const overBudget = totalAnggaran > 0 && totalTerpakai > totalAnggaran;
+    const adaPengeluaranTanpaAnggaran = totalPengeluaranBulanIni > totalTerpakai + 0.5;
+
+    container.innerHTML = `
+      <div class="card-earth ringkasan-anggaran-card">
+        <h6 class="card-title-earth mb-2"><i class="fa-solid fa-chart-simple me-1"></i> Ringkasan ${namaBulan(data.bulan)} ${data.tahun || ''}</h6>
+        <div class="row text-center g-2 mb-2">
+          <div class="col-6">
+            <small class="text-muted d-block">Terpakai (kategori beranggaran)</small>
+            <div class="fw-semibold" style="font-size:1.05rem;">${formatRupiah(totalTerpakai)}</div>
+          </div>
+          <div class="col-6">
+            <small class="text-muted d-block">Total Anggaran Ditetapkan</small>
+            <div class="fw-semibold" style="font-size:1.05rem;">${formatRupiah(totalAnggaran)}</div>
+          </div>
+        </div>
+        ${totalAnggaran > 0 ? `
+          <div class="progress-earth mb-1"><div class="progress-earth-bar" style="width:${pct}%;background:${overBudget ? 'var(--earth-danger)' : 'var(--earth-sage)'};"></div></div>
+          <small class="${overBudget ? 'fw-semibold' : ''}" style="color:${overBudget ? '#ffd4c7' : 'rgba(255,255,255,0.85)'};">
+            ${overBudget
+              ? `Melebihi anggaran sebesar ${formatRupiah(Math.abs(sisa))}`
+              : `Sisa anggaran: ${formatRupiah(sisa)} (${pct}% terpakai)`}
+          </small>
+        ` : `<small class="text-muted">Belum ada anggaran yang ditetapkan untuk bulan ini.</small>`}
+        ${adaPengeluaranTanpaAnggaran ? `
+          <div class="mt-2 small" style="color: rgba(255,255,255,0.85);">
+            <i class="fa-solid fa-circle-info me-1"></i>
+            Total pengeluaran bulan ini sebenarnya ${formatRupiah(totalPengeluaranBulanIni)} — sebagian kategori belum diberi anggaran.
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  function drawAnggaranList(data) {
+    const container = document.getElementById('anggaranList');
+    if (!container) return;
+    const list = data.anggaran || [];
+
+    if (!list.length) {
+      container.innerHTML = `<p class="text-muted small">Belum ada anggaran untuk ${namaBulan(data.bulan)} ${data.tahun || ''}. Silakan susun anggaran kategori Anda di atas.</p>`;
+      return;
+    }
+
+    container.innerHTML = list.map(a => {
+      const batas = Math.max(1, a.batas);
+      const pct = Math.min(100, Math.round((a.terpakai / batas) * 100));
+      const over = a.terpakai > a.batas;
+      const collapseId = 'anggaranTrxCollapse-' + a.row;
+
+      return `
+        <div class="card-earth py-2 px-3 mb-2 anggaran-item" data-kategori="${escapeHtml(a.kategori)}" data-bulan="${a.bulan}" data-tahun="${a.tahun}" data-row="${a.row}" data-batas="${a.batas}">
+          <div class="d-flex justify-content-between small align-items-center mb-1">
+            <span><strong>${escapeHtml(a.kategori)}</strong> ${over ? '<i class="fa-solid fa-triangle-exclamation text-danger ms-1" title="Melebihi anggaran"></i>' : ''}</span>
+            <div class="d-flex align-items-center">
+              <span class="me-2 fw-semibold">${formatRupiah(a.terpakai)} / <span class="text-primary">${formatRupiah(a.batas)}</span></span>
+              <button class="btn btn-sm text-danger border-0 p-1 me-1 anggaran-delete-btn" title="Hapus Anggaran">
+                <i class="fa-solid fa-trash"></i>
+              </button>
+              <button class="btn btn-sm text-secondary border-0 p-1 anggaran-edit-btn" title="Edit Anggaran">
+                <i class="fa-solid fa-pen"></i>
+              </button>
+            </div>
+          </div>
+          <div class="progress-earth"><div class="progress-earth-bar" style="width:${pct}%;background:${over ? 'var(--earth-danger)' : 'var(--earth-sage)'};"></div></div>
+
+          <button class="accordion-toggle-btn" type="button" data-bs-toggle="collapse" data-bs-target="#${collapseId}" aria-expanded="false">
+            <span><i class="fa-solid fa-list-ul me-1"></i> Rincian Transaksi (${a.jumlahTransaksi})</span>
+            <i class="fa-solid fa-chevron-down chevron-icon"></i>
+          </button>
+          <div class="collapse" id="${collapseId}">
+            <div class="trx-accordion-body">
+              ${a.transaksi.length ? a.transaksi.map(trxItemHtml).join('') : '<p class="text-center text-muted small mb-0 py-2">Belum ada transaksi pengeluaran untuk kategori ini pada bulan tersebut.</p>'}
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  // Delegated click listener untuk tombol edit/hapus anggaran — aman terhadap nama
+  // kategori apa pun (termasuk yang mengandung tanda kutip), karena data diambil
+  // dari atribut data-* dan bukan disisipkan ke dalam string onclick.
+  document.addEventListener('click', function(e) {
+    const editBtn = e.target.closest('.anggaran-edit-btn');
+    if (editBtn) {
+      const card = editBtn.closest('.anggaran-item');
+      if (card) {
+        openEditAnggaran(
+          card.dataset.kategori,
+          Number(card.dataset.bulan),
+          Number(card.dataset.tahun),
+          Number(card.dataset.batas),
+          Number(card.dataset.row)
+        );
+      }
+      return;
+    }
+    const delBtn = e.target.closest('.anggaran-delete-btn');
+    if (delBtn) {
+      const card = delBtn.closest('.anggaran-item');
+      if (card) {
+        quickDeleteAnggaran(
+          card.dataset.kategori,
+          Number(card.dataset.bulan),
+          Number(card.dataset.tahun),
+          Number(card.dataset.row)
+        );
+      }
+    }
+  });
+
+  function submitAnggaran(e) {
+    e.preventDefault();
+    const form = e.target;
+    const unlock = lockSubmit(form);
+    if (!unlock) return false;
+
+    const kategori = document.getElementById('anggaranKategori').value;
+    const bulan = Number(document.getElementById('anggaranBulan').value);
+    const tahun = Number(document.getElementById('anggaranTahun').value);
+    const batas = document.getElementById('anggaranBatas').value;
+
+    google.script.run
+      .withSuccessHandler(res => {
+        unlock();
+        if (res && res.success === false) {
+          showToast(res.error || 'Gagal menyimpan', 'error');
+          return;
+        }
+        showToast(res.updated ? 'Batas anggaran diperbarui.' : 'Anggaran berhasil ditambahkan.');
+        form.reset();
+        // Pindahkan tampilan ke bulan/tahun anggaran yang baru saja disimpan
+        // supaya pengguna langsung melihat hasilnya — bagian dari perbaikan sinkronisasi.
+        anggaranViewState = { bulan: bulan, tahun: tahun };
+        initAnggaranFormDate();
+        refreshAll();
+      })
+      .withFailureHandler(err => {
+        unlock();
+        showToast(err.message || err, 'error');
+      })
+      .addAnggaran(kategori, bulan, tahun, batas);
+
+    return false;
+  }
+
+  function openEditAnggaran(kategori, bulan, tahun, batas, rowNumber) {
+    document.getElementById('editAnggaranRow').value = rowNumber || '';
+    document.getElementById('editAnggaranOldKategori').value = kategori;
+    document.getElementById('editAnggaranOldBulan').value = bulan;
+    document.getElementById('editAnggaranOldTahun').value = tahun;
+    document.getElementById('editAnggaranKategori').value = kategori;
+    document.getElementById('editAnggaranBulan').value = bulan;
+    document.getElementById('editAnggaranTahun').value = tahun;
+    document.getElementById('editAnggaranBatas').value = batas;
+    openModal('modalEditAnggaran');
+  }
+
+  function submitEditAnggaran(e) {
+    e.preventDefault();
+    const form = e.target;
+    const unlock = lockSubmit(form);
+    if (!unlock) return false;
+
+    const rowNumber = document.getElementById('editAnggaranRow').value;
+    const oldKategori = document.getElementById('editAnggaranOldKategori').value;
+    const oldBulan = document.getElementById('editAnggaranOldBulan').value;
+    const oldTahun = document.getElementById('editAnggaranOldTahun').value;
+    const payload = {
+      kategori: document.getElementById('editAnggaranKategori').value,
+      bulan: document.getElementById('editAnggaranBulan').value,
+      tahun: document.getElementById('editAnggaranTahun').value,
+      batas: document.getElementById('editAnggaranBatas').value
+    };
+
+    google.script.run
+      .withSuccessHandler(res => {
+        unlock();
+        if (res.success) {
+          showToast('Anggaran diperbarui.');
+          if (bsModals.modalEditAnggaran) bsModals.modalEditAnggaran.hide();
+          anggaranViewState = { bulan: Number(payload.bulan), tahun: Number(payload.tahun) };
+          refreshAll();
+        } else {
+          showToast(res.error || 'Gagal memperbarui', 'error');
+        }
+      })
+      .withFailureHandler(err => {
+        unlock();
+        showToast(err.message || err, 'error');
+      })
+      .updateAnggaran(oldKategori, oldBulan, oldTahun, payload, rowNumber);
+
+    return false;
+  }
+
+  // Hapus langsung dari tombol tempat sampah pada list
+  function quickDeleteAnggaran(kategori, bulan, tahun, rowNumber) {
+    if (!confirm(`Hapus anggaran "${kategori}" (${bulan}/${tahun})?`)) return;
+    google.script.run
+      .withSuccessHandler(res => {
+        if (res.success) {
+          showToast('Anggaran berhasil dihapus.');
+          refreshAll();
+        } else {
+          showToast(res.error || 'Gagal menghapus anggaran', 'error');
+        }
+      })
+      .withFailureHandler(err => showToast(err.message || err, 'error'))
+      .deleteAnggaran(kategori, bulan, tahun, rowNumber);
+  }
+
+  // Hapus dari dalam modal edit
+  function deleteEditingAnggaran() {
+    const rowNumber = document.getElementById('editAnggaranRow').value;
+    const kategori = document.getElementById('editAnggaranOldKategori').value;
+    const bulan = document.getElementById('editAnggaranOldBulan').value;
+    const tahun = document.getElementById('editAnggaranOldTahun').value;
+    if (!confirm(`Hapus anggaran "${kategori}"?`)) return;
+
+    google.script.run
+      .withSuccessHandler(res => {
+        if (res.success) {
+          showToast('Anggaran dihapus.');
+          if (bsModals.modalEditAnggaran) bsModals.modalEditAnggaran.hide();
+          refreshAll();
+        } else {
+          showToast(res.error || 'Gagal menghapus', 'error');
+        }
+      })
+      .withFailureHandler(err => showToast(err.message || err, 'error'))
+      .deleteAnggaran(kategori, bulan, tahun, rowNumber);
+  }
+
+  // ================= BALANCING =================
+  function openBalancingModal() {
+    populateSourceSelects();
+    updateBalancingInfo();
+    openModal('modalBalancing');
+  }
+
+  function updateBalancingInfo() {
+    const sumber = document.getElementById('balancingSumber').value;
+    const r = ((appData.dashboard && appData.dashboard.rincian) || []).find(x => x.sumber === sumber);
+    document.getElementById('balancingSaldoTercatat').textContent = formatRupiah(r ? r.saldoBersih : 0);
+  }
+
+  function submitBalancing(e) {
+    e.preventDefault();
+    const form = e.target;
+    const unlock = lockSubmit(form);
+    if (!unlock) return false;
+
+    const sumber = document.getElementById('balancingSumber').value;
+    const saldoBaru = document.getElementById('balancingSaldoBaru').value;
+
+    google.script.run
+      .withSuccessHandler(res => {
+        unlock();
+        if (res && res.success === false) {
+          showToast(res.error || 'Gagal sinkron', 'error');
+          return;
+        }
+        const msg = Math.abs(res.selisih) > 0.01
+          ? `Sinkron! Selisih ${formatRupiah(Math.abs(res.selisih))} telah disesuaikan.`
+          : 'Saldo sudah sesuai, tidak ada selisih.';
+        showToast(msg);
+        if (bsModals.modalBalancing) bsModals.modalBalancing.hide();
+        form.reset();
+        refreshAll();
+      })
+      .withFailureHandler(err => {
+        unlock();
+        showToast(err.message || err, 'error');
+      })
+      .balancingSaldo(sumber, saldoBaru);
+
+    return false;
+  }
+
+  // ================= HELPERS =================
+  function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+  }
+
+  function showToast(msg, type) {
+    const el = document.createElement('div');
+    el.className = 'toast-earth' + (type === 'error' ? ' error' : '');
+    el.textContent = msg;
+    const container = document.getElementById('toastContainer');
+    if (container) container.appendChild(el);
+    setTimeout(() => el.remove(), 3200);
+  }
+</script>

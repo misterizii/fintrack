@@ -1,0 +1,219 @@
+<style>
+  :root{
+    --earth-brown: #8B6F47;
+    --earth-brown-dark: #6B5537;
+    --earth-sand: #E8DCC8;
+    --earth-sage: #9CAF88;
+    --earth-sage-dark: #7A9068;
+    --earth-terracotta: #C97B5A;
+    --earth-cream: #F7F2E9;
+    --earth-text: #4A3F2F;
+    --earth-danger: #C15C42;
+    --earth-success: #5D8752;
+  }
+
+  *{ box-sizing:border-box; }
+
+  body{
+    background: var(--earth-cream);
+    font-family: 'Poppins', -apple-system, sans-serif;
+    color: var(--earth-text);
+    padding-bottom: 40px;
+  }
+
+  #loadingOverlay{
+    position:fixed; inset:0; z-index:2000;
+    background: var(--earth-cream);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    color: var(--earth-brown-dark);
+  }
+  #loadingOverlay .spinner-border{ color: var(--earth-brown); }
+  #loadingOverlay.d-none{ display:none; }
+
+  .navbar-earth{
+    background: linear-gradient(135deg, var(--earth-brown), var(--earth-brown-dark));
+    padding: 14px 0;
+  }
+  .navbar-earth .navbar-brand{
+    color:#fff; font-weight:600; font-size:1.1rem;
+  }
+  .btn-earth-outline{
+    border:1px solid rgba(255,255,255,0.6); color:#fff; background:transparent;
+  }
+  .btn-earth-outline:hover{ background:rgba(255,255,255,0.15); color:#fff; }
+
+  .hero-card{
+    background: linear-gradient(135deg, var(--earth-sage), var(--earth-sage-dark));
+    color:#fff;
+    border-radius: 20px;
+    padding: 22px 20px;
+    box-shadow: 0 8px 24px rgba(122,144,104,0.35);
+    text-align:center;
+  }
+  .hero-label{ margin:0; opacity:0.85; font-size:0.85rem; letter-spacing:0.5px; text-transform:uppercase; }
+  .hero-amount{ font-size:2.1rem; font-weight:700; margin:4px 0 0; }
+  .btn-light-earth{
+    background: rgba(255,255,255,0.18); color:#fff; border:none; border-radius:12px; font-size:0.85rem;
+  }
+  .btn-light-earth:hover{ background: rgba(255,255,255,0.28); color:#fff; }
+
+  #rincianSaldoBody .rincian-row{
+    display:flex; justify-content:space-between; align-items:center;
+    background: rgba(255,255,255,0.14);
+    border-radius: 10px; padding:8px 12px; margin-top:6px; font-size:0.85rem;
+  }
+  #rincianSaldoBody .rincian-row .rincian-nominal{ text-align:right; }
+  #rincianSaldoBody .rincian-row small{ display:block; opacity:0.85; }
+
+  .btn-action{
+    width:100%; border:none; background:#fff; border-radius:16px; padding:12px 4px;
+    display:flex; flex-direction:column; align-items:center; gap:6px;
+    box-shadow: 0 2px 8px rgba(139,111,71,0.12);
+    color: var(--earth-brown-dark); font-size:0.75rem; font-weight:500;
+    transition: transform 0.1s ease;
+  }
+  .btn-action i{ font-size:1.3rem; }
+  .btn-action:active{ transform: scale(0.96); }
+
+  .nav-earth{ flex-wrap:nowrap; overflow-x:auto; gap:6px; padding-bottom:4px; }
+  .nav-earth::-webkit-scrollbar{ display:none; }
+  .nav-earth .nav-link{
+    white-space:nowrap; color: var(--earth-brown-dark); background:#fff;
+    border-radius: 20px; font-size:0.82rem; padding:7px 16px; border:1px solid #e6dcc9;
+  }
+  .nav-earth .nav-link.active{
+    background: var(--earth-terracotta); color:#fff; border-color: var(--earth-terracotta);
+  }
+
+  .card-earth{
+    background:#fff; border-radius:18px; padding:16px; margin-bottom:14px;
+    box-shadow: 0 2px 10px rgba(139,111,71,0.10);
+  }
+  .card-title-earth{ color: var(--earth-brown-dark); font-weight:600; }
+  .form-label-earth{ font-size:0.8rem; color: var(--earth-brown-dark); font-weight:500; margin-bottom:2px; }
+
+  .btn-earth{
+    background: var(--earth-terracotta); border:none; color:#fff; font-weight:500; border-radius:12px;
+  }
+  .btn-earth:hover{ background:#b5694b; color:#fff; }
+
+  .search-box{
+    background:#fff; border-radius:14px; padding:10px 14px; display:flex; align-items:center; gap:10px;
+    box-shadow: 0 2px 8px rgba(139,111,71,0.10);
+  }
+  .search-box i{ color: var(--earth-brown); }
+  .search-box input{ border:none; outline:none; flex:1; background:transparent; font-size:0.9rem; }
+
+  .trx-item{
+    background:#fff; border-radius:14px; padding:12px 14px; margin-bottom:8px;
+    display:flex; justify-content:space-between; align-items:center;
+    box-shadow: 0 2px 6px rgba(139,111,71,0.08);
+  }
+  .trx-item .trx-icon{
+    width:38px; height:38px; border-radius:10px; display:flex; align-items:center; justify-content:center;
+    color:#fff; font-size:0.9rem; margin-right:10px; flex-shrink:0;
+  }
+  .trx-icon.in{ background: var(--earth-success); }
+  .trx-icon.out{ background: var(--earth-danger); }
+  .trx-meta small{ display:block; color:#8a7a63; }
+  .trx-amount.in{ color: var(--earth-success); font-weight:600; }
+  .trx-amount.out{ color: var(--earth-danger); font-weight:600; }
+  .trx-edit-btn{ color: var(--earth-brown); background:none; border:none; margin-left:8px; }
+
+  /* Styling Tambahan untuk List Dompet */
+  .list-row-earth{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:10px 12px; background: var(--earth-cream); border-radius:12px; margin-bottom:6px;
+  }
+  .list-row-actions button, .edit-btn{
+    background:transparent; border:none; color: var(--earth-brown); padding:4px 8px; font-size:0.9rem;
+  }
+  .list-row-actions button:hover, .edit-btn:hover{ color: var(--earth-terracotta); }
+
+  /* BARU: kartu dompet (menggantikan list-row-earth agar bisa menampung accordion di bawahnya) */
+  .dompet-card{
+    background:#fff; border:1px solid var(--earth-sand); border-radius:14px;
+    padding:12px 14px; margin-bottom:8px;
+  }
+
+  /* BARU: tombol pemicu accordion "Rincian Transaksi" (dipakai di Dompet & Anggaran) */
+  .accordion-toggle-btn{
+    width:100%; background: var(--earth-cream); border:1px solid var(--earth-sand);
+    border-radius:10px; padding:7px 12px; font-size:0.78rem; font-weight:500;
+    color: var(--earth-brown-dark); display:flex; justify-content:space-between; align-items:center;
+    margin-top:8px;
+  }
+  .accordion-toggle-btn:hover{ background: var(--earth-sand); }
+  .accordion-toggle-btn .chevron-icon{ transition: transform 0.2s ease; font-size:0.7rem; }
+  .accordion-toggle-btn[aria-expanded="true"] .chevron-icon{ transform: rotate(180deg); }
+
+  /* BARU: isi accordion rincian transaksi */
+  .trx-accordion-body{
+    max-height:340px; overflow-y:auto; padding-top:8px;
+  }
+  .trx-accordion-body .trx-item{ margin-bottom:6px; }
+  .trx-accordion-body .trx-item:last-child{ margin-bottom:0; }
+
+  /* BARU: kartu ringkasan anggaran bulan berjalan (di atas tab Anggaran) */
+  .ringkasan-anggaran-card{
+    background: linear-gradient(135deg, var(--earth-brown), var(--earth-brown-dark));
+    color:#fff;
+  }
+  .ringkasan-anggaran-card .card-title-earth{ color:#fff; }
+  .ringkasan-anggaran-card small.text-muted{ color: rgba(255,255,255,0.75) !important; }
+  .ringkasan-anggaran-card .progress-earth{ background: rgba(255,255,255,0.25); }
+
+  .chip-earth{
+    display:inline-block; background: var(--earth-sand); color: var(--earth-brown-dark);
+    border-radius: 20px; padding:2px 10px; font-size:0.72rem; font-weight:500;
+  }
+  .badge-lunas{ background: var(--earth-sage); color:#fff; border-radius:20px; padding:3px 10px; font-size:0.72rem; }
+  .badge-belum{ background: var(--earth-terracotta); color:#fff; border-radius:20px; padding:3px 10px; font-size:0.72rem; }
+  .progress-earth{ height:8px; border-radius:6px; background: var(--earth-sand); overflow:hidden; }
+  .progress-earth-bar{ height:100%; background: var(--earth-sage); }
+
+  .calendar-legend{ font-size:0.75rem; color:#8a7a63; }
+
+  /* ===== KALENDER (menampung angka pengeluaran per tanggal) ===== */
+  .calendar-grid{ display:grid; grid-template-columns: repeat(7,1fr); gap:6px; }
+  .calendar-cell{
+    aspect-ratio: 0.85;
+    border-radius:8px;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    font-size:0.75rem; font-weight:500; color: var(--earth-brown-dark); background: var(--earth-cream);
+    padding:2px; overflow:hidden;
+  }
+  .calendar-cell .cal-day-num{ font-size:0.78rem; font-weight:600; line-height:1; }
+  .calendar-cell .cal-day-expense{
+    font-size:0.52rem; font-weight:600; line-height:1; margin-top:2px;
+    color: var(--earth-danger); white-space:nowrap;
+  }
+  .calendar-cell.filled{ background: rgba(93,135,82,0.28); color: var(--earth-brown-dark); font-weight:600; }
+  .calendar-cell.empty-day{ background: rgba(193,92,66,0.14); }
+  .calendar-cell.future{ opacity:0.35; }
+  .calendar-cell.blank{ background:transparent; }
+  .calendar-cell:not(.blank){ cursor:pointer; transition: transform 0.08s ease, box-shadow 0.08s ease; }
+  .calendar-cell:not(.blank):hover{ box-shadow: 0 0 0 2px rgba(139,111,71,0.35) inset; }
+  .calendar-cell:not(.blank):active{ transform: scale(0.94); }
+
+  .modal-earth{ border-radius:20px; overflow:hidden; }
+  .modal-earth .modal-header{ background: var(--earth-sand); border:none; }
+  .modal-earth .modal-title{ color: var(--earth-brown-dark); font-weight:600; }
+  .modal-earth .modal-footer{ border:none; gap:8px; }
+
+  .split-row{ display:flex; gap:6px; margin-bottom:6px; align-items:center; }
+  .split-row select, .split-row input{ font-size:0.85rem; }
+
+  .toast-container-earth{ position:fixed; top:70px; left:50%; transform:translateX(-50%); z-index:3000; width:90%; max-width:420px; }
+  .toast-earth{
+    background: var(--earth-brown-dark); color:#fff; padding:10px 16px; border-radius:12px;
+    margin-bottom:8px; font-size:0.85rem; box-shadow:0 4px 14px rgba(0,0,0,0.2);
+    animation: slideDown 0.25s ease;
+  }
+  .toast-earth.error{ background: var(--earth-danger); }
+  @keyframes slideDown{ from{ opacity:0; transform:translateY(-10px);} to{opacity:1; transform:translateY(0);} }
+
+  @media (min-width: 576px){
+    .hero-amount{ font-size:2.6rem; }
+  }
+</style>
