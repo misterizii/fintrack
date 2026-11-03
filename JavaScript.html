@@ -173,13 +173,42 @@
   }
 
   // ================= HERO / RINCIAN =================
+  // Label bulan berjalan (mis. "November 2026") — diambil dari backend supaya
+  // sama persis dengan bulan yang dipakai untuk menghitung angkanya.
+  function labelBulanBerjalan() {
+    const d = appData.dashboard || {};
+    const now = new Date();
+    const bulan = d.bulanBerjalan || (now.getMonth() + 1);
+    const tahun = d.tahunBerjalan || now.getFullYear();
+    return namaBulan(bulan) + ' ' + tahun;
+  }
+
+  // Label bulan sebelum bulan berjalan (mis. "Oktober 2026").
+  function labelBulanLalu() {
+    const d = appData.dashboard || {};
+    const now = new Date();
+    let bulan = (d.bulanBerjalan || (now.getMonth() + 1)) - 1;
+    let tahun = d.tahunBerjalan || now.getFullYear();
+    if (bulan < 1) { bulan = 12; tahun--; }
+    return namaBulan(bulan) + ' ' + tahun;
+  }
+
+  // DIPERBAIKI: Pemasukan & Pengeluaran di hero sekarang hanya bulan berjalan.
   function renderHero() {
     const d = appData.dashboard || {};
     document.getElementById('totalSaldoText').textContent = formatRupiah(d.totalSaldo || 0);
     document.getElementById('totalPemasukanText').textContent = formatRupiah(d.totalPemasukan || 0);
     document.getElementById('totalPengeluaranText').textContent = formatRupiah(d.totalPengeluaran || 0);
+
+    const bulanLabel = labelBulanBerjalan();
+    const lblIn = document.getElementById('labelPemasukan');
+    const lblOut = document.getElementById('labelPengeluaran');
+    if (lblIn) lblIn.textContent = 'Pemasukan ' + bulanLabel;
+    if (lblOut) lblOut.textContent = 'Pengeluaran ' + bulanLabel;
   }
 
+  // DIPERBAIKI: angka +/- per dompet ikut bulan berjalan, supaya konsisten
+  // dengan angka Pemasukan/Pengeluaran di atasnya. Saldo bersih tetap total.
   function renderRincianSaldo() {
     const body = document.getElementById('rincianSaldoBody');
     if (!body) return;
@@ -191,8 +220,8 @@
           <small>Saldo bersih: ${formatRupiah(r.saldoBersih)}</small>
         </div>
         <div class="rincian-nominal">
-          <div class="text-success">+${formatRupiah(r.pemasukan)}</div>
-          <small class="text-danger">-${formatRupiah(r.pengeluaran)}</small>
+          <div class="text-success">+${formatRupiah(r.pemasukanBulanIni)}</div>
+          <small class="text-danger">-${formatRupiah(r.pengeluaranBulanIni)}</small>
         </div>
       </div>
     `).join('') || '<p class="text-white-50 small mb-0">Belum ada data dompet.</p>';
@@ -346,10 +375,15 @@
   }
 
   // ================= TRANSAKSI LIST =================
+  // DIPERBAIKI: tiap ketikan memanggil server; jawaban yang datang terlambat
+  // (untuk kata kunci lama) bisa menimpa hasil kata kunci terbaru. Sekarang
+  // hanya jawaban untuk kata kunci yang masih terketik yang ditampilkan.
   function onSearch() {
     const term = document.getElementById('searchInput').value.trim();
     if (!term) { renderTransaksiList(appData.transaksi); return; }
-    google.script.run.withSuccessHandler(renderTransaksiList).getTransaksi(term);
+    google.script.run.withSuccessHandler(list => {
+      if (document.getElementById('searchInput').value.trim() === term) renderTransaksiList(list);
+    }).getTransaksi(term);
   }
 
   // Pencarian transaksi langsung di halaman utama (tab Dashboard)
@@ -384,7 +418,11 @@
   // supaya bisa dipakai ulang di tab Riwayat, modal per-tanggal, dan accordion rincian.
   function trxItemHtml(t) {
     const isIn = t['Jenis'] === 'Pemasukan';
-    const tgl = new Date(t['Tanggal']);
+    // DIPERBAIKI: new Date('yyyy-MM-dd') dibaca sebagai tengah malam UTC,
+    // sehingga di zona waktu tertentu tanggalnya mundur sehari. Pakai jam 12
+    // siang waktu lokal (sama seperti formatTanggalIndo).
+    const tglRaw = String(t['Tanggal'] || '');
+    const tgl = /^\d{4}-\d{2}-\d{2}$/.test(tglRaw) ? new Date(tglRaw + 'T12:00:00') : new Date(tglRaw);
     const tglStr = !isNaN(tgl.getTime())
       ? tgl.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
       : t['Tanggal'];
@@ -417,10 +455,34 @@
     container.innerHTML = list.map(trxItemHtml).join('');
   }
 
+  // DIPERBAIKI: sebelumnya currentModalTanggal tidak pernah di-reset, jadi
+  // setelah sekali membuka modal tanggal di kalender, setiap edit/hapus
+  // transaksi dari tab LAIN (Riwayat, Dompet, Anggaran) ikut memunculkan modal
+  // tanggal itu lagi. Sekarang modal tanggal hanya dibuka ulang kalau edit
+  // memang dimulai dari modal tanggal.
+  let kembaliKeTanggal = null;
+
+  function isModalShown(id) {
+    const el = document.getElementById(id);
+    return !!(el && el.classList.contains('show'));
+  }
+
+  // Dipanggil setelah simpan/hapus transaksi: buka ulang modal tanggal
+  // SETELAH data terbaru selesai dimuat (sebelumnya pakai setTimeout 300ms,
+  // sehingga daftar yang tampil masih data lama).
+  function refreshAllLaluKembaliKeTanggal() {
+    const tanggal = kembaliKeTanggal;
+    kembaliKeTanggal = null;
+    refreshAll(() => {
+      if (tanggal) openDateModal(tanggal);
+    });
+  }
+
   function editTransaksi(id) {
     const t = (appData.transaksi || []).find(x => String(x['ID Transaksi']) === String(id));
     if (!t) return;
     // Jika modal riwayat-per-tanggal sedang terbuka, sembunyikan dulu agar tidak tumpang tindih
+    kembaliKeTanggal = isModalShown('modalTanggalTransaksi') ? currentModalTanggal : null;
     if (bsModals.modalTanggalTransaksi) bsModals.modalTanggalTransaksi.hide();
 
     document.getElementById('editId').value = id;
@@ -456,10 +518,7 @@
         if (res.success) {
           showToast('Transaksi diperbarui.');
           if (bsModals.modalEditTransaksi) bsModals.modalEditTransaksi.hide();
-          refreshAll();
-          if (currentModalTanggal) {
-            setTimeout(() => { renderTanggalTransaksiList(); openModal('modalTanggalTransaksi'); }, 300);
-          }
+          refreshAllLaluKembaliKeTanggal();
         } else {
           showToast(res.error || 'Gagal memperbarui', 'error');
         }
@@ -481,10 +540,7 @@
         if (res.success) {
           showToast('Transaksi dihapus.');
           if (bsModals.modalEditTransaksi) bsModals.modalEditTransaksi.hide();
-          refreshAll();
-          if (currentModalTanggal) {
-            setTimeout(() => { renderTanggalTransaksiList(); openModal('modalTanggalTransaksi'); }, 300);
-          }
+          refreshAllLaluKembaliKeTanggal();
         } else {
           showToast(res.error || 'Gagal menghapus', 'error');
         }
@@ -840,11 +896,54 @@
       .sort((a, b) => new Date(b['Tanggal']) - new Date(a['Tanggal']));
   }
 
+  // BARU: kartu dompet virtual "SISA BULAN LALU".
+  // Isinya = saldo semua dompet per akhir bulan lalu, dihitung otomatis oleh
+  // backend (getDashboardData). Hanya tampilan: tidak tersimpan di sheet, tidak
+  // bisa diedit/dipakai sebagai sumber transaksi, dan tidak mengubah saldo
+  // dompet asli.
+  function sisaBulanLaluCardHtml() {
+    const d = appData.dashboard || {};
+    const total = Number(d.sisaBulanLalu) || 0;
+    const rincian = (d.rincian || []).filter(r => Math.abs(Number(r.sisaBulanLalu) || 0) > 0.5);
+
+    return `
+      <div class="dompet-card dompet-sisa">
+        <div class="d-flex align-items-center justify-content-between">
+          <div>
+            <i class="fa-solid fa-box-archive me-2" style="color:var(--earth-brown);"></i>
+            <strong>SISA BULAN LALU</strong><span class="sisa-badge-auto">otomatis</span>
+          </div>
+          <span class="badge ${total >= 0 ? 'bg-success text-white' : 'bg-danger text-white'}" style="font-size:0.82rem;padding:5px 10px;border-radius:10px;">
+            ${formatRupiah(total)}
+          </span>
+        </div>
+        <small class="text-muted d-block mt-2" style="font-size:0.75rem;">
+          Sisa uang semua dompet per akhir ${labelBulanLalu()}, sebelum transaksi ${labelBulanBerjalan()}.
+        </small>
+
+        <button class="accordion-toggle-btn" type="button" data-bs-toggle="collapse" data-bs-target="#dompetSisaCollapse" aria-expanded="false">
+          <span><i class="fa-solid fa-list-ul me-1"></i> Rincian per Dompet (${rincian.length})</span>
+          <i class="fa-solid fa-chevron-down chevron-icon"></i>
+        </button>
+        <div class="collapse" id="dompetSisaCollapse">
+          <div class="trx-accordion-body">
+            ${rincian.length
+              ? rincian.map(r => `
+                  <div class="sisa-row">
+                    <span>${escapeHtml(r.sumber)}</span>
+                    <strong class="${r.sisaBulanLalu >= 0 ? 'text-success' : 'text-danger'}">${formatRupiah(r.sisaBulanLalu)}</strong>
+                  </div>`).join('')
+              : '<p class="text-center text-muted small mb-0 py-2">Belum ada sisa dari bulan lalu.</p>'}
+          </div>
+        </div>
+      </div>`;
+  }
+
   function renderDompetList() {
     const container = document.getElementById('dompetList');
     if (!container) return;
     const rincianList = (appData.dashboard && appData.dashboard.rincian) ? appData.dashboard.rincian : [];
-    container.innerHTML = (appData.dompets || []).map((d, i) => {
+    container.innerHTML = sisaBulanLaluCardHtml() + ((appData.dompets || []).map((d, i) => {
       const nama = d['Nama Dompet'];
       const r = rincianList.find(x => String(x.sumber).trim().toLowerCase() === String(nama).trim().toLowerCase());
       const saldoSaatIni = r ? r.saldoBersih : Number(d['Saldo Awal'] || 0);
@@ -888,7 +987,7 @@
           </div>
         </div>
       </div>`;
-    }).join('') || '<p class="text-muted small">Belum ada dompet.</p>';
+    }).join('') || '<p class="text-muted small">Belum ada dompet.</p>');
   }
 
   // Delegated click listener untuk tombol edit Dompet — aman terhadap nama dompet

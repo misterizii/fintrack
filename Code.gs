@@ -50,6 +50,13 @@ const WALLET_DEFAULT  = 'Kas / Tunai';
 const ADJUSTMENT_CATEGORY = 'Penyesuaian Saldo';
 const TABUNGAN_PREFIX     = 'Tabungan: ';
 
+// Nama dompet virtual (dihitung otomatis, tidak disimpan di sheet Dompet).
+const WALLET_SISA_BULAN_LALU = 'SISA BULAN LALU';
+
+function isReservedWalletName(nama) {
+  return String(nama || '').trim().toLowerCase() === WALLET_SISA_BULAN_LALU.toLowerCase();
+}
+
 function isInternalCategory(kategori) {
   const k = String(kategori || '');
   return k === ADJUSTMENT_CATEGORY || k.indexOf(TABUNGAN_PREFIX) === 0;
@@ -359,8 +366,9 @@ function addDompet(nama, saldoAwal) {
   return withLock(() => {
     nama = String(nama || '').trim();
     if (!nama) return { success: false, error: 'Nama dompet tidak boleh kosong' };
+    if (isReservedWalletName(nama)) return { success: false, error: 'Nama "' + WALLET_SISA_BULAN_LALU + '" dipakai otomatis oleh sistem, pilih nama lain' };
 
-    const dup = getDompets().some(d => String(d['Nama Dompet']).toLowerCase() === nama.toLowerCase());
+    const dup =getDompets().some(d => String(d['Nama Dompet']).toLowerCase() === nama.toLowerCase());
     if (dup) return { success: false, error: 'Dompet dengan nama itu sudah ada' };
 
     const sheet = SS.getSheetByName(SHEET_DOMPET);
@@ -373,6 +381,7 @@ function updateDompet(originalNama, data) {
   return withLock(() => {
     const namaBaru = String(data.nama || '').trim();
     if (!namaBaru) return { success: false, error: 'Nama dompet tidak boleh kosong' };
+    if (isReservedWalletName(namaBaru)) return { success: false, error: 'Nama "' + WALLET_SISA_BULAN_LALU + '" dipakai otomatis oleh sistem, pilih nama lain' };
 
     if (namaBaru.toLowerCase() !== originalNama.toLowerCase()) {
       const dup = getDompets().some(d =>
@@ -705,21 +714,49 @@ function updateAnggaran(oldKategori, oldBulan, oldTahun, data, rowNumber) {
       sheet.getRange(rowIdx, colBatas).setNumberFormat('0').setValue(batasBaru);
     }
 
-    if (rowNumber && rowNumber >= 2 && rowNumber <= values.length) {
-      writeRow(Number(rowNumber));
-      return { success: true };
+    const idx = { colKat, colBulan, colTahun };
+    const targetRow = findAnggaranRow_(values, idx, oldKategori, oldBulan, oldTahun, rowNumber);
+    if (!targetRow) return { success: false, error: 'Anggaran tidak ditemukan di spreadsheet (mungkin sudah diubah/dihapus). Muat ulang halaman lalu coba lagi.' };
+
+    // DIPERBAIKI: tolak kalau hasil edit bentrok dengan anggaran lain yang
+    // kategori + bulan + tahunnya sama. Sebelumnya ini membuat baris ganda,
+    // sehingga total anggaran terhitung dua kali.
+    const bentrok = findAnggaranRow_(values, idx, kategoriBaru, bulanBaru, tahunBaru, null);
+    if (bentrok && bentrok !== targetRow) {
+      return { success: false, error: 'Anggaran "' + kategoriBaru + '" untuk ' + bulanBaru + '/' + tahunBaru + ' sudah ada. Edit anggaran itu saja.' };
     }
 
-    const targetKat = String(oldKategori || '').trim().toLowerCase();
-    for (let i = 1; i < values.length; i++) {
-      const rowKat = String(values[i][colKat - 1] || '').trim().toLowerCase();
-      if (rowKat === targetKat) {
-        writeRow(i + 1);
-        return { success: true };
-      }
-    }
-    return { success: false, error: 'Anggaran tidak ditemukan di spreadsheet' };
+    writeRow(targetRow);
+    return { success: true };
   });
+}
+
+/**
+ * DIPERBAIKI: mencari baris anggaran secara aman.
+ * Sebelumnya update/hapus langsung memakai nomor baris dari browser tanpa
+ * dicek (kalau baris sudah bergeser karena ada yang dihapus, baris LAIN yang
+ * ikut terhapus/tertimpa), dan pencarian cadangannya hanya mencocokkan
+ * kategori (sehingga bisa mengenai anggaran bulan lain dengan kategori sama).
+ * Sekarang nomor baris hanya dipakai kalau isinya benar-benar cocok
+ * (kategori + bulan + tahun); kalau tidak, dicari ulang berdasarkan ketiganya.
+ * Mengembalikan nomor baris di sheet (>= 2), atau 0 bila tidak ditemukan.
+ */
+function findAnggaranRow_(values, idx, kategori, bulan, tahun, rowNumber) {
+  const targetKat = String(kategori || '').trim().toLowerCase();
+  const b = Number(bulan);
+  const t = Number(tahun);
+  const cocok = row =>
+    String(row[idx.colKat - 1] || '').trim().toLowerCase() === targetKat &&
+    toSafeNumber(row[idx.colBulan - 1]) === b &&
+    toSafeNumber(row[idx.colTahun - 1]) === t;
+
+  const r = Number(rowNumber);
+  if (r >= 2 && r <= values.length && cocok(values[r - 1])) return r;
+
+  for (let i = 1; i < values.length; i++) {
+    if (cocok(values[i])) return i + 1;
+  }
+  return 0;
 }
 
 function deleteAnggaran(kategori, bulan, tahun, rowNumber) {
@@ -728,23 +765,12 @@ function deleteAnggaran(kategori, bulan, tahun, rowNumber) {
     const values = sheet.getDataRange().getValues();
     if (values.length < 2) return { success: false, error: 'Tidak ada data anggaran' };
 
-    if (rowNumber && rowNumber >= 2 && rowNumber <= values.length) {
-      sheet.deleteRow(Number(rowNumber));
-      return { success: true };
-    }
+    const { colKat, colBulan, colTahun } = getAnggaranHeaderIndices(sheet);
+    const targetRow = findAnggaranRow_(values, { colKat, colBulan, colTahun }, kategori, bulan, tahun, rowNumber);
+    if (!targetRow) return { success: false, error: 'Anggaran tidak ditemukan (mungkin sudah dihapus). Muat ulang halaman lalu coba lagi.' };
 
-    const { colKat } = getAnggaranHeaderIndices(sheet);
-    const targetKat = String(kategori || '').trim().toLowerCase();
-
-    for (let i = 1; i < values.length; i++) {
-      const rowKat = String(values[i][colKat - 1] || '').trim().toLowerCase();
-      if (rowKat === targetKat) {
-        sheet.deleteRow(i + 1);
-        return { success: true };
-      }
-    }
-
-    return { success: false, error: 'Anggaran tidak ditemukan' };
+    sheet.deleteRow(targetRow);
+    return { success: true };
   });
 }
 
@@ -908,10 +934,11 @@ function setorTabungan(id, nominal, sumber) {
     const values = sheet.getDataRange().getValues();
     for (let i = 1; i < values.length; i++) {
       if (values[i][0] === id) {
-        const newSaldo = Number(values[i][3]) + nominal;
-        sheet.getRange(i + 1, 4).setValue(newSaldo);
-
-        _addTransaksiRaw({
+        // DIPERBAIKI: catat transaksi pengeluarannya DULU. Sebelumnya saldo
+        // tabungan langsung ditambah, lalu hasil _addTransaksiRaw diabaikan —
+        // kalau pencatatan gagal (mis. dompet kosong), saldo tabungan tetap
+        // bertambah padahal uang di dompet tidak berkurang.
+        const trx = _addTransaksiRaw({
           tanggal: new Date(),
           jenis: 'Pengeluaran',
           sumber: sumber,
@@ -919,6 +946,10 @@ function setorTabungan(id, nominal, sumber) {
           nominal: nominal,
           keterangan: 'Setoran tabungan ke "' + values[i][1] + '"'
         });
+        if (!trx.success) return trx;
+
+        const newSaldo = Number(values[i][3]) + nominal;
+        sheet.getRange(i + 1, 4).setValue(newSaldo);
         return { success: true, newSaldo: newSaldo };
       }
     }
@@ -931,34 +962,91 @@ function getTabungan() {
 }
 
 // ================= DASHBOARD & KALENDER =================
+/**
+ * DIPERBAIKI: totalPemasukan & totalPengeluaran sekarang HANYA menghitung
+ * transaksi bulan berjalan (sebelumnya menjumlahkan seluruh riwayat sejak awal).
+ *
+ * BARU: sisaBulanLalu = saldo semua dompet per akhir bulan lalu
+ * (saldo awal + semua pemasukan - semua pengeluaran SEBELUM bulan berjalan).
+ * Nilai ini ditampilkan sebagai dompet virtual "SISA BULAN LALU" di tab
+ * Anggaran. Dompet ini HANYA tampilan (dihitung otomatis, tidak ditulis ke
+ * sheet), jadi saldo dompet asli (BCA, Tunai, dst.) dan fitur Balancing tidak
+ * berubah. Total saldo tetap = sisa bulan lalu + arus kas bulan berjalan.
+ *
+ * Catatan: total pemasukan/pengeluaran bulan berjalan tetap mengecualikan
+ * kategori internal (Penyesuaian Saldo & setoran Tabungan), sama seperti
+ * sebelumnya. Sedangkan angka per dompet di `rincian` memasukkan semuanya,
+ * karena dipakai untuk menghitung saldo dompet yang sebenarnya.
+ */
 function getDashboardData() {
   try {
     const transaksi = sheetToObjects(SHEET_TRANSAKSI);
     const dompets = getDompets();
     const sumberList = getAllSumberDana();
 
+    const now = new Date();
+    const tz = Session.getScriptTimeZone();
+    const currentYM = Utilities.formatDate(now, tz, 'yyyy-MM');
+    const bulanBerjalan = Number(currentYM.substring(5, 7));
+    const tahunBerjalan = Number(currentYM.substring(0, 4));
+
+    const nominalOf = t => Number(t['Nominal'] || 0);
+    const isBulanIni = t => getYearMonthKey(t['Tanggal']) === currentYM;
+    // Perbandingan string 'yyyy-MM' aman secara leksikografis.
+    const isSebelumBulanIni = t => getYearMonthKey(t['Tanggal']) < currentYM;
+
     const rincian = sumberList.map(sumber => {
       const sLower = String(sumber || '').trim().toLowerCase();
-      const pemasukan = transaksi
-        .filter(t => String(t['Sumber/Dompet'] || '').trim().toLowerCase() === sLower && t['Jenis'] === 'Pemasukan')
-        .reduce((s, t) => s + Number(t['Nominal'] || 0), 0);
-      const pengeluaran = transaksi
-        .filter(t => String(t['Sumber/Dompet'] || '').trim().toLowerCase() === sLower && t['Jenis'] === 'Pengeluaran')
-        .reduce((s, t) => s + Number(t['Nominal'] || 0), 0);
+      const milikDompet = transaksi.filter(t => String(t['Sumber/Dompet'] || '').trim().toLowerCase() === sLower);
+      const masuk = milikDompet.filter(t => t['Jenis'] === 'Pemasukan');
+      const keluar = milikDompet.filter(t => t['Jenis'] === 'Pengeluaran');
+
+      // Total sepanjang waktu (dipakai untuk saldo bersih).
+      const pemasukan = masuk.reduce((s, t) => s + nominalOf(t), 0);
+      const pengeluaran = keluar.reduce((s, t) => s + nominalOf(t), 0);
+
+      // Arus kas bulan berjalan.
+      const pemasukanBulanIni = masuk.filter(isBulanIni).reduce((s, t) => s + nominalOf(t), 0);
+      const pengeluaranBulanIni = keluar.filter(isBulanIni).reduce((s, t) => s + nominalOf(t), 0);
+
       const saldoAwal = Number((dompets.find(d => String(d['Nama Dompet'] || '').trim().toLowerCase() === sLower) || {})['Saldo Awal'] || 0);
       const saldoBersih = saldoAwal + pemasukan - pengeluaran;
-      return { sumber: sumber, pemasukan: pemasukan, pengeluaran: pengeluaran, saldoAwal: saldoAwal, saldoBersih: saldoBersih };
+
+      // Saldo dompet ini per akhir bulan lalu.
+      const sisaBulanLalu = saldoAwal
+        + masuk.filter(isSebelumBulanIni).reduce((s, t) => s + nominalOf(t), 0)
+        - keluar.filter(isSebelumBulanIni).reduce((s, t) => s + nominalOf(t), 0);
+
+      return {
+        sumber: sumber,
+        pemasukan: pemasukan,
+        pengeluaran: pengeluaran,
+        pemasukanBulanIni: pemasukanBulanIni,
+        pengeluaranBulanIni: pengeluaranBulanIni,
+        saldoAwal: saldoAwal,
+        saldoBersih: saldoBersih,
+        sisaBulanLalu: sisaBulanLalu
+      };
     });
 
     const totalSaldo = rincian.reduce((s, r) => s + r.saldoBersih, 0);
+    const sisaBulanLalu = rincian.reduce((s, r) => s + r.sisaBulanLalu, 0);
 
-    const transaksiAsli = transaksi.filter(t => !isInternalCategory(t['Kategori']));
-    const totalPemasukan = transaksiAsli.filter(t => t['Jenis'] === 'Pemasukan').reduce((s, t) => s + Number(t['Nominal'] || 0), 0);
-    const totalPengeluaran = transaksiAsli.filter(t => t['Jenis'] === 'Pengeluaran').reduce((s, t) => s + Number(t['Nominal'] || 0), 0);
+    const transaksiAsliBulanIni = transaksi.filter(t => !isInternalCategory(t['Kategori']) && isBulanIni(t));
+    const totalPemasukan = transaksiAsliBulanIni.filter(t => t['Jenis'] === 'Pemasukan').reduce((s, t) => s + nominalOf(t), 0);
+    const totalPengeluaran = transaksiAsliBulanIni.filter(t => t['Jenis'] === 'Pengeluaran').reduce((s, t) => s + nominalOf(t), 0);
 
-    return { totalSaldo: totalSaldo, totalPemasukan: totalPemasukan, totalPengeluaran: totalPengeluaran, rincian: rincian };
+    return {
+      totalSaldo: totalSaldo,
+      totalPemasukan: totalPemasukan,
+      totalPengeluaran: totalPengeluaran,
+      sisaBulanLalu: sisaBulanLalu,
+      bulanBerjalan: bulanBerjalan,
+      tahunBerjalan: tahunBerjalan,
+      rincian: rincian
+    };
   } catch(e) {
-    return { totalSaldo: 0, totalPemasukan: 0, totalPengeluaran: 0, rincian: [] };
+    return { totalSaldo: 0, totalPemasukan: 0, totalPengeluaran: 0, sisaBulanLalu: 0, rincian: [] };
   }
 }
 

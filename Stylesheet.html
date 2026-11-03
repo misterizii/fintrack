@@ -136,6 +136,19 @@
     padding:12px 14px; margin-bottom:8px;
   }
 
+  /* BARU: kartu dompet virtual "SISA BULAN LALU" (dihitung otomatis, tidak bisa diedit) */
+  .dompet-card.dompet-sisa{
+    background: var(--earth-cream); border:1px dashed var(--earth-brown);
+  }
+  .dompet-sisa .sisa-badge-auto{
+    font-size:0.65rem; font-weight:500; color: var(--earth-brown-dark);
+    background: var(--earth-sand); border-radius:8px; padding:1px 6px; margin-left:6px;
+  }
+  .dompet-sisa .sisa-row{
+    display:flex; justify-content:space-between; font-size:0.78rem;
+    padding:6px 10px; background:#fff; border-radius:8px; margin-bottom:4px;
+  }
+
   /* BARU: tombol pemicu accordion "Rincian Transaksi" (dipakai di Dompet & Anggaran) */
   .accordion-toggle-btn{
     width:100%; background: var(--earth-cream); border:1px solid var(--earth-sand);
